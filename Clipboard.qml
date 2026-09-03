@@ -10,15 +10,18 @@ Item {
   id: root
 
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
+  property var manifest: null
   property bool opened: false
   property string filterText: ""
   property int selectedIndex: 0
   property bool cursorActive: false
   property bool clearConfirmOpen: false
   property var history: []
+  property bool initialized: false
 
   property string historyPath: Quickshell.env("HOME") + "/.local/state/omarchy/clipboard-history.json"
-  property string captureScript: root.omarchyPath + "/shell/plugins/clipboard/capture.sh"
+  readonly property string pluginPath: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : root.omarchyPath + "/shell/plugins/clipboard"
+  property string captureScript: root.pluginPath + "/capture.sh"
   // Shares the [menu] surface tokens — themes that style the menu also
   // style the clipboard. Selected-row colors composed in the
   // singleton so consumers drop them straight into Rectangle bindings.
@@ -34,10 +37,18 @@ Item {
   property int contentMargin: Style.spacing.panelPadding
   property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
   property int contentSpacing: Style.spacing.md
-  property int cardWidth: Math.min(Style.space(875), panel.width - Style.gapsOut * 2)
-  property int cardHeight: Math.min(Style.space(600), panel.height - Style.gapsOut * 2)
+  property int cardWidth: Math.max(0, Math.min(Style.space(875), panel.width - Style.gapsOut * 2))
+  property int cardHeight: Math.max(0, Math.min(Style.space(600), panel.height - Style.gapsOut * 2))
   property int rowHeight: Math.max(Style.space(50), Style.font.body + Style.font.caption + Style.spacing.rowPaddingX * 2)
+  property int informationRowHeight: Math.max(Style.space(44), Style.font.title + Style.spacing.controlPaddingY * 2)
+  readonly property bool showDetails: root.cardWidth >= Style.space(640)
   property int historyLimit: 500
+
+  function initialize() {
+    if (root.initialized) return
+    root.initialized = true
+    initProc.running = true
+  }
 
   function open(payloadJson) {
     root.opened = true
@@ -138,11 +149,16 @@ Item {
       var row = rows[i]
       displayModel.append({
         entryType: row.entryType,
+        typeLabel: row.typeLabel,
         fullText: row.fullText,
         previewText: row.previewText,
         previewImage: row.previewImage ? Util.fileUrl(row.previewImage) : "",
         path: row.path,
         mime: row.mime,
+        sourceApp: row.sourceApp,
+        sourceIcon: row.sourceIcon,
+        url: row.url,
+        title: row.title,
         historyIndex: row.index
       })
     }
@@ -238,7 +254,8 @@ Item {
     Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-clipboard-open", "--history-index", String(row.historyIndex)])
   }
 
-  Component.onCompleted: initProc.running = true
+  Component.onCompleted: Qt.callLater(root.initialize)
+  onManifestChanged: root.initialize()
 
   ListModel { id: displayModel }
 
@@ -263,7 +280,7 @@ Item {
   // the shell exits, however it exits, so no further lifecycle management.
   Process {
     id: initProc
-    command: ["pkill", "-f", "wl-paste .*--watch .*/shell/plugins/clipboard/capture\\.sh"]
+    command: ["pkill", "-f", "wl-paste .*--watch .*/plugins/[^/]+/capture\\.sh"]
     onExited: {
       currentProc.running = true
       textWatchProc.running = true
@@ -446,14 +463,14 @@ Item {
 
         Item {
           width: parent.width
-          height: parent.height - root.headerHeight - root.contentSpacing
+          height: Math.max(0, parent.height - root.headerHeight - root.contentSpacing)
 
           Row {
             anchors.fill: parent
             spacing: 0
 
             Item {
-              width: parent.width / 2
+              width: root.showDetails && displayModel.count > 0 ? parent.width / 2 : parent.width
               height: parent.height
               clip: true
 
@@ -531,7 +548,9 @@ Item {
             }
 
             Item {
-              width: parent.width / 2
+              id: detailsPane
+              visible: root.showDetails && displayModel.count > 0
+              width: visible ? parent.width / 2 : 0
               height: parent.height
               clip: true
 
@@ -545,34 +564,15 @@ Item {
                 color: Util.alpha(root.border, 0.28)
               }
 
-              Text {
-                visible: parent.activeRow && !parent.activeRow.previewImage
+              ClipboardInformation {
                 anchors.fill: parent
                 anchors.leftMargin: root.contentMargin
-                anchors.rightMargin: 0
-                anchors.topMargin: 0
-                anchors.bottomMargin: 0
-                text: parent.activeRow ? parent.activeRow.fullText : ""
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                wrapMode: Text.WrapAnywhere
-                elide: Text.ElideRight
-                verticalAlignment: Text.AlignTop
-              }
-
-              Image {
-                visible: parent.activeRow && parent.activeRow.previewImage
-                anchors.fill: parent
-                anchors.leftMargin: root.contentMargin
-                anchors.rightMargin: 0
-                anchors.topMargin: 0
-                anchors.bottomMargin: 0
-                source: parent.activeRow ? parent.activeRow.previewImage : ""
-                fillMode: Image.PreserveAspectFit
-                verticalAlignment: Image.AlignTop
-                asynchronous: true
-                smooth: true
+                entry: detailsPane.activeRow
+                foreground: root.foreground
+                borderColor: root.border
+                fontFamily: root.fontFamily
+                cornerRadius: root.cornerRadius
+                rowHeight: root.informationRowHeight
               }
             }
           }
@@ -606,4 +606,5 @@ Item {
       }
     }
   }
+
 }

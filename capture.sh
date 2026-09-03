@@ -16,6 +16,47 @@ if [[ ${CLIPBOARD_STATE:-} == "sensitive" ]] || grep -qx 'x-kde-passwordManagerH
   exit 0
 fi
 
+SOURCE_APP=""
+SOURCE_ICON=""
+SOURCE_TITLE=""
+
+capture_source() {
+  local active_window source_id normalized_id
+
+  active_window=$(hyprctl activewindow -j 2>/dev/null || printf '{}')
+  source_id=$(jq -r '(.class // .initialClass // "") | tostring' <<<"$active_window" 2>/dev/null)
+  SOURCE_TITLE=$(jq -r '(.title // .initialTitle // "") | tostring' <<<"$active_window" 2>/dev/null)
+  [[ $source_id == null ]] && source_id=""
+  [[ $SOURCE_TITLE == null ]] && SOURCE_TITLE=""
+
+  SOURCE_ICON="$source_id"
+  normalized_id=${source_id,,}
+  case "$normalized_id" in
+  brave-browser*) SOURCE_APP="Brave Browser"; SOURCE_ICON="brave-browser" ;;
+  google-chrome*) SOURCE_APP="Google Chrome"; SOURCE_ICON="google-chrome" ;;
+  chromium*) SOURCE_APP="Chromium"; SOURCE_ICON="chromium" ;;
+  firefox*|org.mozilla.firefox*) SOURCE_APP="Firefox"; SOURCE_ICON="firefox" ;;
+  code|code-oss) SOURCE_APP="Visual Studio Code"; SOURCE_ICON="visual-studio-code" ;;
+  codium|vscodium) SOURCE_APP="VSCodium"; SOURCE_ICON="vscodium" ;;
+  org.gnome.nautilus|nautilus) SOURCE_APP="Files" ;;
+  org.kde.dolphin|dolphin) SOURCE_APP="Dolphin" ;;
+  "") ;;
+  *) SOURCE_APP=$(sed -E 's/[._-]+/ /g; s/(^| )([a-z])/\1\U\2/g' <<<"$source_id") ;;
+  esac
+}
+
+enrich_entry() {
+  jq -c \
+    --arg source_app "$SOURCE_APP" \
+    --arg source_icon "$SOURCE_ICON" \
+    --arg source_title "$SOURCE_TITLE" \
+    'if ($source_app | length) == 0 and ($source_title | length) == 0 then . else
+      . + {sourceApp:$source_app, sourceIcon:$source_icon, sourceTitle:$source_title}
+    end'
+}
+
+capture_source
+
 emit_image() {
   local mime="$1"
   local ext tmp hash file
@@ -39,7 +80,7 @@ emit_image() {
   fi
 
   jq -cn --arg mime "$mime" --arg path "$file" --arg captured_at "$(date +'%A %H:%M')" \
-    '{type:"image", mime:$mime, path:$path, capturedAt:$captured_at}'
+    '{type:"image", mime:$mime, path:$path, capturedAt:$captured_at}' | enrich_entry
 }
 
 emit_text() {
@@ -90,7 +131,7 @@ emit_text() {
 }
 
 case "${1:-}" in
-text) emit_text; exit 0 ;;
+text) emit_text | enrich_entry; exit 0 ;;
 image/*) emit_image "$1"; exit 0 ;;
 esac
 
@@ -102,5 +143,5 @@ for mime in image/png image/jpeg image/webp image/gif image/bmp image/tiff; do
 done
 
 if grep -q '^text/' <<<"$types" || grep -qx 'UTF8_STRING' <<<"$types" || grep -qx 'STRING' <<<"$types"; then
-  wl-paste --type text --no-newline 2>/dev/null | emit_text
+  wl-paste --type text --no-newline 2>/dev/null | emit_text | enrich_entry
 fi
