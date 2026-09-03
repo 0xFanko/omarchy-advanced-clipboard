@@ -110,6 +110,19 @@ Item {
       }
 
       InformationRow {
+        label: "Date"
+        value: root.entry ? root.entry.capturedDate : "—"
+        valueRightAligned: true
+        shaded: true
+      }
+
+      InformationRow {
+        label: "Time"
+        value: root.entry ? root.entry.capturedTime : "—"
+        valueRightAligned: true
+      }
+
+      InformationRow {
         visible: root.entry && root.entry.url.length > 0
         label: "URL"
         value: visible ? root.entry.url : ""

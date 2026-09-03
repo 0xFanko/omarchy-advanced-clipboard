@@ -18,8 +18,6 @@ function normalizeEntry(value) {
       path: path,
       mime: String(value.mime || "image/png")
     }
-    if (value.capturedAt !== undefined && value.capturedAt !== null)
-      entry.capturedAt = String(value.capturedAt)
     return withSourceMetadata(entry, value)
   }
 
@@ -30,10 +28,12 @@ function withSourceMetadata(entry, value) {
   var sourceApp = String(value.sourceApp || "").trim()
   var sourceIcon = String(value.sourceIcon || "").trim()
   var sourceTitle = String(value.sourceTitle || "").trim()
+  var capturedAt = String(value.capturedAt || "").trim()
 
   if (sourceApp) entry.sourceApp = sourceApp
   if (sourceIcon) entry.sourceIcon = sourceIcon
   if (sourceTitle) entry.sourceTitle = sourceTitle
+  if (capturedAt) entry.capturedAt = capturedAt
   return entry
 }
 
@@ -151,6 +151,18 @@ function displayType(entry, isFile, isImage, url) {
   return "Text"
 }
 
+function captureDate(value) {
+  var timestamp = String(value || "").trim()
+  var match = /^(\d{4})-(\d{2})-(\d{2})T/.exec(timestamp)
+  return match ? match[3] + "/" + match[2] + "/" + match[1] : "—"
+}
+
+function captureTime(value) {
+  var timestamp = String(value || "").trim()
+  var match = /(?:T|\s)(\d{2}):(\d{2})(?::\d{2})?/.exec(timestamp)
+  return match ? match[1] + ":" + match[2] : "—"
+}
+
 function decodeFileUri(uri) {
   var value = String(uri || "").trim()
   if (value.indexOf("file://") !== 0) return ""
@@ -195,7 +207,10 @@ function imagePreviewText(entry) {
   if (!timestamp) return "Image"
 
   var label = String(entry && entry.mime || "") === "image/png" ? "Screenshot" : "Image"
-  return label + " from " + timestamp
+  var date = captureDate(timestamp)
+  var time = captureTime(timestamp)
+  var formattedTimestamp = date !== "—" ? date + (time !== "—" ? " " + time : "") : timestamp
+  return label + " from " + formattedTimestamp
 }
 
 function previewText(entry) {
@@ -257,6 +272,8 @@ function displayRows(history, query, limit) {
       mime: isImage ? String(entry.mime || "image/png") : "text/plain",
       sourceApp: String(entry.sourceApp || "Unknown"),
       sourceIcon: String(entry.sourceIcon || ""),
+      capturedDate: captureDate(entry.capturedAt),
+      capturedTime: captureTime(entry.capturedAt),
       url: url,
       title: url ? cleanSourceTitle(entry.sourceTitle, entry.sourceApp) : "",
       index: i
@@ -280,6 +297,8 @@ if (typeof module !== "undefined") {
     linkUrl: linkUrl,
     cleanSourceTitle: cleanSourceTitle,
     displayType: displayType,
+    captureDate: captureDate,
+    captureTime: captureTime,
     previewText: previewText,
     imagePreviewText: imagePreviewText,
     filePaths: filePaths,

@@ -157,6 +157,8 @@ Item {
         mime: row.mime,
         sourceApp: row.sourceApp,
         sourceIcon: row.sourceIcon,
+        capturedDate: row.capturedDate,
+        capturedTime: row.capturedTime,
         url: row.url,
         title: row.title,
         historyIndex: row.index

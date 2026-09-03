@@ -7,7 +7,8 @@ const link = ClipboardHistory.normalizeEntry({
   text: url,
   sourceApp: "Brave Browser",
   sourceIcon: "brave-browser",
-  sourceTitle: "omarchy/default/agents/skills/omarchy at quattro · omacom/omarchy - Brave"
+  sourceTitle: "omarchy/default/agents/skills/omarchy at quattro · omacom/omarchy - Brave",
+  capturedAt: "2026-09-04T14:37:52+02:00"
 })
 const linkRow = ClipboardHistory.displayRows([link], "", 50)[0]
 
@@ -16,14 +17,22 @@ assert.equal(linkRow.sourceApp, "Brave Browser")
 assert.equal(linkRow.sourceIcon, "brave-browser")
 assert.equal(linkRow.url, url)
 assert.equal(linkRow.title, "omarchy/default/agents/skills/omarchy at quattro · omacom/omarchy")
+assert.equal(linkRow.capturedDate, "04/09/2026")
+assert.equal(linkRow.capturedTime, "14:37")
 
 const legacyTextRow = ClipboardHistory.displayRows([{ type: "text", text: "not a link" }], "", 50)[0]
 assert.equal(legacyTextRow.typeLabel, "Text")
 assert.equal(legacyTextRow.sourceApp, "Unknown")
 assert.equal(legacyTextRow.url, "")
+assert.equal(legacyTextRow.capturedDate, "—")
+assert.equal(legacyTextRow.capturedTime, "—")
 
 const imageRow = ClipboardHistory.displayRows([{ type: "image", path: "/tmp/image.png", mime: "image/png" }], "", 50)[0]
 assert.equal(imageRow.typeLabel, "Image")
+
+assert.equal(ClipboardHistory.captureDate("Friday 12:30"), "—")
+assert.equal(ClipboardHistory.captureTime("Friday 12:30"), "12:30")
+assert.equal(ClipboardHistory.imagePreviewText({ type: "image", mime: "image/png", capturedAt: "2026-09-04T14:37:52+02:00" }), "Screenshot from 04/09/2026 14:37")
 
 const longEntry = {
   type: "text",

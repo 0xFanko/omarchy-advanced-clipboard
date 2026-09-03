@@ -19,6 +19,7 @@ fi
 SOURCE_APP=""
 SOURCE_ICON=""
 SOURCE_TITLE=""
+CAPTURED_AT=$(date --iso-8601=seconds)
 
 capture_source() {
   local active_window source_id normalized_id
@@ -50,9 +51,11 @@ enrich_entry() {
     --arg source_app "$SOURCE_APP" \
     --arg source_icon "$SOURCE_ICON" \
     --arg source_title "$SOURCE_TITLE" \
-    'if ($source_app | length) == 0 and ($source_title | length) == 0 then . else
-      . + {sourceApp:$source_app, sourceIcon:$source_icon, sourceTitle:$source_title}
-    end'
+    --arg captured_at "$CAPTURED_AT" \
+    '. + {capturedAt:$captured_at}
+      + if ($source_app | length) == 0 and ($source_title | length) == 0 then {} else
+          {sourceApp:$source_app, sourceIcon:$source_icon, sourceTitle:$source_title}
+        end'
 }
 
 capture_source
@@ -79,8 +82,8 @@ emit_image() {
     mv "$tmp" "$file"
   fi
 
-  jq -cn --arg mime "$mime" --arg path "$file" --arg captured_at "$(date +'%A %H:%M')" \
-    '{type:"image", mime:$mime, path:$path, capturedAt:$captured_at}' | enrich_entry
+  jq -cn --arg mime "$mime" --arg path "$file" \
+    '{type:"image", mime:$mime, path:$path}' | enrich_entry
 }
 
 emit_text() {
