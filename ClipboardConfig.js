@@ -13,6 +13,8 @@ function defaultShortcuts() {
     pasteEntry: "Return",
     copyEntry: "Shift+Return",
     openEntry: "Alt+Return",
+    editEntry: "Ctrl+E",
+    saveEdit: "Ctrl+S",
     deleteEntry: "Delete",
     clearHistory: "Shift+Delete"
   }

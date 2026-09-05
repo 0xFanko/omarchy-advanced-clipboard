@@ -30,6 +30,25 @@ assert.equal(legacyTextRow.capturedTime, "—")
 const imageRow = ClipboardHistory.displayRows([{ type: "image", path: "/tmp/image.png", mime: "image/png" }], "", 50)[0]
 assert.equal(imageRow.typeLabel, "Image")
 
+const editableHistory = [{
+  type: "text",
+  text: "before",
+  sourceApp: "Foot",
+  sourceIcon: "foot",
+  sourceTitle: "Terminal",
+  capturedAt: "2026-09-04T14:37:52+02:00"
+}]
+const editedHistory = ClipboardHistory.updateTextEntry(editableHistory, 0, "after\nsecond line")
+assert.equal(editableHistory[0].text, "before")
+assert.equal(editedHistory[0].text, "after\nsecond line")
+assert.equal(editedHistory[0].sourceApp, "Foot")
+assert.equal(editedHistory[0].sourceIcon, "foot")
+assert.equal(editedHistory[0].sourceTitle, "Terminal")
+assert.equal(editedHistory[0].capturedAt, "2026-09-04T14:37:52+02:00")
+assert.deepEqual(ClipboardHistory.updateTextEntry(editableHistory, 0, "   "), editableHistory)
+assert.deepEqual(ClipboardHistory.updateTextEntry([{ type: "image", path: "/tmp/image.png" }], 0, "text"), [{ type: "image", path: "/tmp/image.png" }])
+assert.deepEqual(ClipboardHistory.updateTextEntry(editableHistory, 4, "text"), editableHistory)
+
 assert.equal(ClipboardHistory.captureDate("Friday 12:30"), "—")
 assert.equal(ClipboardHistory.captureTime("Friday 12:30"), "12:30")
 assert.equal(ClipboardHistory.imagePreviewText({ type: "image", mime: "image/png", capturedAt: "2026-09-04T14:37:52+02:00" }), "Screenshot from 04/09/2026 14:37")

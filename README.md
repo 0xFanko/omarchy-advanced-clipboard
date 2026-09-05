@@ -11,6 +11,7 @@ It makes it easy to find and reuse previously copied text, links, files, and ima
 - detect copied links;
 - display the source application;
 - show detailed information such as type, date, time, URL, and title;
+- edit text entries directly from the clipboard history;
 - delete one entry or clear the entire history;
 - customize every internal keyboard shortcut;
 - exclude selected applications from clipboard history.
@@ -44,6 +45,8 @@ cp clipboard.example.json clipboard.json
     "pasteEntry": "Return",
     "copyEntry": "Shift+Return",
     "openEntry": "Alt+Return",
+    "editEntry": "Ctrl+E",
+    "saveEdit": "Ctrl+S",
     "deleteEntry": "Ctrl+X",
     "clearHistory": "Ctrl+Shift+X"
   },
@@ -65,8 +68,12 @@ Les raccourcis utilisent la syntaxe Qt (`Ctrl+X`, `Shift+Delete`, etc.). Ils doi
 | `pasteEntry` | Coller l’entrée sélectionnée |
 | `copyEntry` | Copier sans coller |
 | `openEntry` | Ouvrir l’entrée |
+| `editEntry` | Modifier l’entrée texte sélectionnée |
+| `saveEdit` | Enregistrer la modification en cours |
 | `deleteEntry` | Supprimer l’entrée |
 | `clearHistory` | Effacer tout l’historique |
+
+Seules les entrées affichées avec le type `Text` peuvent être modifiées. `editEntry` ouvre l’éditeur, `saveEdit` enregistre le nouveau contenu et `close` annule la modification.
 
 Évitez d’attribuer une lettre seule : elle ne pourra plus être saisie dans la recherche lorsque le clipboard est ouvert.
 

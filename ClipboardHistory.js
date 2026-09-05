@@ -90,6 +90,20 @@ function removeEntryAt(history, index) {
   return next
 }
 
+function updateTextEntry(history, index, text) {
+  var values = Array.isArray(history) ? history : []
+  var target = Number(index)
+  var nextText = String(text === undefined || text === null ? "" : text)
+  if (isNaN(target) || target < 0 || target >= values.length || !nextText.trim()) return values.slice()
+
+  var existing = normalizeEntry(values[target])
+  if (!existing || existing.type !== "text") return values.slice()
+
+  var next = values.slice()
+  next[target] = withSourceMetadata({ type: "text", text: nextText }, existing)
+  return next
+}
+
 function clearHistory() {
   return []
 }
@@ -291,6 +305,7 @@ if (typeof module !== "undefined") {
     parseHistory: parseHistory,
     addEntry: addEntry,
     removeEntryAt: removeEntryAt,
+    updateTextEntry: updateTextEntry,
     clearHistory: clearHistory,
     parseEntryJson: parseEntryJson,
     searchableText: searchableText,

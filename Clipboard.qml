@@ -17,6 +17,11 @@ Item {
   property int selectedIndex: 0
   property bool cursorActive: false
   property bool clearConfirmOpen: false
+  property bool editMode: false
+  property int editingHistoryIndex: -1
+  property string editingEntryKey: ""
+  property string editDraftText: ""
+  property string editError: ""
   property var history: []
   property bool initialized: false
   property var settings: ClipboardConfig.defaultConfig()
@@ -55,6 +60,7 @@ Item {
   }
 
   function open(payloadJson) {
+    root.resetEditState()
     root.opened = true
     root.filterText = ""
     root.selectedIndex = 0
@@ -65,8 +71,84 @@ Item {
   }
 
   function close() {
+    root.resetEditState()
     root.cancelClearHistory()
     root.opened = false
+  }
+
+  function resetEditState() {
+    root.editMode = false
+    root.editingHistoryIndex = -1
+    root.editingEntryKey = ""
+    root.editDraftText = ""
+    root.editError = ""
+  }
+
+  function selectedRow() {
+    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
+    return displayModel.get(root.selectedIndex)
+  }
+
+  function canEditSelected() {
+    var row = root.selectedRow()
+    return row && row.entryType === "text" && row.typeLabel === "Text"
+  }
+
+  function beginEdit() {
+    if (!root.canEditSelected()) return
+
+    var row = root.selectedRow()
+    var entry = ClipboardHistory.normalizeEntry(root.history[row.historyIndex])
+    if (!entry || entry.type !== "text") return
+
+    root.editingHistoryIndex = row.historyIndex
+    root.editingEntryKey = ClipboardHistory.entryKey(entry)
+    root.editDraftText = entry.text
+    root.editError = ""
+    root.editMode = true
+    Qt.callLater(function() { detailsPane.focusEditor() })
+  }
+
+  function currentEditingHistoryIndex() {
+    if (!root.editingEntryKey) return -1
+    if (root.editingHistoryIndex >= 0 && root.editingHistoryIndex < root.history.length) {
+      var originalEntry = ClipboardHistory.normalizeEntry(root.history[root.editingHistoryIndex])
+      if (originalEntry && ClipboardHistory.entryKey(originalEntry) === root.editingEntryKey)
+        return root.editingHistoryIndex
+    }
+    for (var i = 0; i < root.history.length; i++) {
+      var entry = ClipboardHistory.normalizeEntry(root.history[i])
+      if (entry && ClipboardHistory.entryKey(entry) === root.editingEntryKey) return i
+    }
+    return -1
+  }
+
+  function saveEdit() {
+    if (!root.editMode) return
+    var nextText = detailsPane.editedText
+    if (!String(nextText).trim()) {
+      root.editError = "Clipboard text cannot be empty."
+      return
+    }
+
+    var targetIndex = root.currentEditingHistoryIndex()
+    if (targetIndex < 0) {
+      root.editError = "This clipboard entry no longer exists."
+      return
+    }
+
+    root.history = ClipboardHistory.updateTextEntry(root.history, targetIndex, nextText)
+    root.saveHistory()
+    root.resetEditState()
+    root.rebuildDisplay()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function cancelEdit() {
+    if (!root.editMode) return
+    root.resetEditState()
+    root.rebuildDisplay()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function clearSearchOrClose() {
@@ -89,7 +171,7 @@ Item {
 
   function loadHistory(raw) {
     root.history = ClipboardHistory.parseHistory(raw)
-    if (root.opened) root.rebuildDisplay()
+    if (root.opened && !root.editMode) root.rebuildDisplay()
   }
 
   function loadSettings(raw) {
@@ -108,7 +190,7 @@ Item {
 
     root.history = ClipboardHistory.addEntry(root.history, normalized, root.historyLimit)
     root.saveHistory()
-    if (root.opened) root.rebuildDisplay()
+    if (root.opened && !root.editMode) root.rebuildDisplay()
   }
 
   function addClipboardJson(line) {
@@ -382,76 +464,90 @@ Item {
       sequence: String(root.shortcuts.close)
       enabled: root.opened && !root.clearConfirmOpen
       autoRepeat: false
-      onActivated: root.clearSearchOrClose()
+      onActivated: root.editMode ? root.cancelEdit() : root.clearSearchOrClose()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.editEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      autoRepeat: false
+      onActivated: root.beginEdit()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.saveEdit)
+      enabled: root.opened && !root.clearConfirmOpen && root.editMode
+      autoRepeat: false
+      onActivated: root.saveEdit()
     }
 
     Shortcut {
       sequence: String(root.shortcuts.previousEntry)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       onActivated: root.select(-1)
     }
 
     Shortcut {
       sequence: String(root.shortcuts.nextEntry)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       onActivated: root.select(1)
     }
 
     Shortcut {
       sequence: String(root.shortcuts.previousPage)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       onActivated: root.select(-6)
     }
 
     Shortcut {
       sequence: String(root.shortcuts.nextPage)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       onActivated: root.select(6)
     }
 
     Shortcut {
       sequence: String(root.shortcuts.firstEntry)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       onActivated: root.selectAbsolute(0)
     }
 
     Shortcut {
       sequence: String(root.shortcuts.lastEntry)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       onActivated: root.selectAbsolute(displayModel.count - 1)
     }
 
     Shortcut {
       sequence: String(root.shortcuts.pasteEntry)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       autoRepeat: false
       onActivated: root.pasteCurrentEntry()
     }
 
     Shortcut {
       sequence: String(root.shortcuts.copyEntry)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       autoRepeat: false
       onActivated: root.copyCurrentEntry()
     }
 
     Shortcut {
       sequence: String(root.shortcuts.openEntry)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       autoRepeat: false
       onActivated: root.openCurrentEntry()
     }
 
     Shortcut {
       sequence: String(root.shortcuts.deleteEntry)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       autoRepeat: false
       onActivated: root.removeDisplayIndex(root.selectedIndex)
     }
 
     Shortcut {
       sequence: String(root.shortcuts.clearHistory)
-      enabled: root.opened && !root.clearConfirmOpen
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
       autoRepeat: false
       onActivated: root.requestClearHistory()
     }
@@ -556,7 +652,7 @@ Item {
             spacing: 0
 
             Item {
-              width: root.showDetails && displayModel.count > 0 ? parent.width / 2 : parent.width
+              width: root.editMode ? 0 : (root.showDetails && displayModel.count > 0 ? parent.width / 2 : parent.width)
               height: parent.height
               clip: true
 
@@ -566,6 +662,7 @@ Item {
                 anchors.rightMargin: root.contentMargin
                 model: displayModel
                 clip: true
+                interactive: !root.editMode
                 spacing: Style.space(4)
                 boundsBehavior: Flickable.StopAtBounds
 
@@ -618,6 +715,7 @@ Item {
 
                   MouseArea {
                     anchors.fill: parent
+                    enabled: !root.editMode
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onPositionChanged: function(mouse) {
@@ -635,14 +733,20 @@ Item {
 
             Item {
               id: detailsPane
-              visible: root.showDetails && displayModel.count > 0
-              width: visible ? parent.width / 2 : 0
+              visible: (root.showDetails || root.editMode) && displayModel.count > 0
+              width: visible ? (root.editMode && !root.showDetails ? parent.width : parent.width / 2) : 0
               height: parent.height
               clip: true
 
               property var activeRow: displayModel.count > 0 && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count ? displayModel.get(root.selectedIndex) : null
+              readonly property string editedText: clipboardInformation.editedText
+
+              function focusEditor() {
+                clipboardInformation.focusEditor()
+              }
 
               Rectangle {
+                visible: root.showDetails
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
@@ -651,6 +755,7 @@ Item {
               }
 
               ClipboardInformation {
+                id: clipboardInformation
                 anchors.fill: parent
                 anchors.leftMargin: root.contentMargin
                 entry: detailsPane.activeRow
@@ -659,6 +764,11 @@ Item {
                 fontFamily: root.fontFamily
                 cornerRadius: root.cornerRadius
                 rowHeight: root.informationRowHeight
+                editing: root.editMode
+                draftText: root.editDraftText
+                editError: root.editError
+                saveShortcut: String(root.shortcuts.saveEdit)
+                cancelShortcut: String(root.shortcuts.close)
               }
             }
           }

@@ -11,6 +11,16 @@ Item {
   property string fontFamily: ""
   property int cornerRadius: 0
   property int rowHeight: Style.space(44)
+  property bool editing: false
+  property string draftText: ""
+  property string editError: ""
+  property string saveShortcut: "Ctrl+S"
+  property string cancelShortcut: "Escape"
+  property alias editedText: editField.text
+
+  function focusEditor() {
+    if (root.editing) editField.forceActiveFocus()
+  }
 
   function iconSource(icon) {
     var value = String(icon || "")
@@ -21,6 +31,12 @@ Item {
   }
 
   onEntryChanged: informationFlick.contentY = 0
+  onEditingChanged: {
+    if (!root.editing) return
+    editField.text = root.draftText
+    informationFlick.contentY = 0
+    Qt.callLater(function() { root.focusEditor() })
+  }
 
   Flickable {
     id: informationFlick
@@ -36,7 +52,7 @@ Item {
       spacing: Style.space(6)
 
       Text {
-        visible: root.entry && !root.entry.previewImage
+        visible: root.entry && !root.entry.previewImage && !root.editing
         width: parent.width
         text: visible ? root.entry.fullText : ""
         textFormat: Text.PlainText
@@ -49,7 +65,7 @@ Item {
       }
 
       Image {
-        visible: root.entry && root.entry.previewImage.length > 0
+        visible: root.entry && root.entry.previewImage.length > 0 && !root.editing
         width: parent.width
         height: visible ? Style.space(260) : 0
         source: visible ? root.entry.previewImage : ""
@@ -57,6 +73,71 @@ Item {
         verticalAlignment: Image.AlignTop
         asynchronous: true
         smooth: true
+      }
+
+      Text {
+        visible: root.editing
+        width: parent.width
+        height: visible ? implicitHeight : 0
+        text: "Edit clipboard text"
+        textFormat: Text.PlainText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.heading
+        font.weight: Font.Medium
+        bottomPadding: Style.space(6)
+      }
+
+      Rectangle {
+        visible: root.editing
+        width: parent.width
+        height: visible ? Math.max(Style.space(220), editField.contentHeight + Style.space(24)) : 0
+        radius: root.cornerRadius
+        color: Util.alpha(root.borderColor, 0.10)
+        border.width: Style.normalBorderWidth
+        border.color: Util.alpha(root.borderColor, 0.45)
+
+        TextEdit {
+          id: editField
+          anchors.fill: parent
+          anchors.margins: Style.space(12)
+          color: root.foreground
+          selectionColor: Util.alpha(root.foreground, 0.28)
+          selectedTextColor: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.title
+          textFormat: TextEdit.PlainText
+          wrapMode: TextEdit.Wrap
+          selectByMouse: true
+          persistentSelection: true
+          cursorVisible: activeFocus
+        }
+      }
+
+      Text {
+        visible: root.editing
+        width: parent.width
+        height: visible ? implicitHeight : 0
+        text: root.saveShortcut + " to save · " + root.cancelShortcut + " to cancel"
+        textFormat: Text.PlainText
+        color: root.foreground
+        opacity: 0.58
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.Wrap
+      }
+
+      Text {
+        visible: root.editing && root.editError.length > 0
+        width: parent.width
+        height: visible ? implicitHeight : 0
+        text: root.editError
+        textFormat: Text.PlainText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.weight: Font.Medium
+        wrapMode: Text.Wrap
       }
 
       Text {
