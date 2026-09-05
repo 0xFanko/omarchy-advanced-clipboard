@@ -8,6 +8,7 @@ set -o pipefail
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy"
 IMAGE_DIR="$STATE_DIR/clipboard-images"
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/clipboard.json"
 mkdir -p "$IMAGE_DIR"
 
 types=$(wl-paste --list-types 2>/dev/null || true)
@@ -19,19 +20,20 @@ fi
 SOURCE_APP=""
 SOURCE_ICON=""
 SOURCE_TITLE=""
+SOURCE_ID=""
 CAPTURED_AT=$(date --iso-8601=seconds)
 
 capture_source() {
-  local active_window source_id normalized_id
+  local active_window normalized_id
 
   active_window=$(hyprctl activewindow -j 2>/dev/null || printf '{}')
-  source_id=$(jq -r '(.class // .initialClass // "") | tostring' <<<"$active_window" 2>/dev/null)
+  SOURCE_ID=$(jq -r '(.class // .initialClass // "") | tostring' <<<"$active_window" 2>/dev/null)
   SOURCE_TITLE=$(jq -r '(.title // .initialTitle // "") | tostring' <<<"$active_window" 2>/dev/null)
-  [[ $source_id == null ]] && source_id=""
+  [[ $SOURCE_ID == null ]] && SOURCE_ID=""
   [[ $SOURCE_TITLE == null ]] && SOURCE_TITLE=""
 
-  SOURCE_ICON="$source_id"
-  normalized_id=${source_id,,}
+  SOURCE_ICON="$SOURCE_ID"
+  normalized_id=${SOURCE_ID,,}
   case "$normalized_id" in
   brave-browser*) SOURCE_APP="Brave Browser"; SOURCE_ICON="brave-browser" ;;
   google-chrome*) SOURCE_APP="Google Chrome"; SOURCE_ICON="google-chrome" ;;
@@ -42,8 +44,22 @@ capture_source() {
   org.gnome.nautilus|nautilus) SOURCE_APP="Files" ;;
   org.kde.dolphin|dolphin) SOURCE_APP="Dolphin" ;;
   "") ;;
-  *) SOURCE_APP=$(sed -E 's/[._-]+/ /g; s/(^| )([a-z])/\1\U\2/g' <<<"$source_id") ;;
+  *) SOURCE_APP=$(sed -E 's/[._-]+/ /g; s/(^| )([a-z])/\1\U\2/g' <<<"$SOURCE_ID") ;;
   esac
+}
+
+source_is_excluded() {
+  [[ -f $CONFIG_FILE ]] || return 1
+
+  jq -e \
+    --arg source_id "${SOURCE_ID,,}" \
+    --arg source_app "${SOURCE_APP,,}" \
+    '(.excludedApplications // [])
+      | arrays
+      | any(.[ ];
+          (tostring | gsub("^[[:space:]]+|[[:space:]]+$"; "") | ascii_downcase) as $candidate
+          | ($candidate | length) > 0 and ($candidate == $source_id or $candidate == $source_app)
+        )' "$CONFIG_FILE" >/dev/null 2>&1
 }
 
 enrich_entry() {
@@ -59,6 +75,7 @@ enrich_entry() {
 }
 
 capture_source
+source_is_excluded && exit 0
 
 emit_image() {
   local mime="$1"

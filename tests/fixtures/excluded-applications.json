@@ -1,0 +1,6 @@
+{
+  "excludedApplications": [
+    "Brave Browser",
+    "org.keepassxc.KeePassXC"
+  ]
+}

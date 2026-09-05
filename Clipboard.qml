@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "ClipboardConfig.js" as ClipboardConfig
 import "ClipboardHistory.js" as ClipboardHistory
 
 Item {
@@ -18,8 +19,11 @@ Item {
   property bool clearConfirmOpen: false
   property var history: []
   property bool initialized: false
+  property var settings: ClipboardConfig.defaultConfig()
 
   property string historyPath: Quickshell.env("HOME") + "/.local/state/omarchy/clipboard-history.json"
+  property string configHome: Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config"
+  property string configPath: root.configHome + "/omarchy/clipboard.json"
   readonly property string pluginPath: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : root.omarchyPath + "/shell/plugins/clipboard"
   property string captureScript: root.pluginPath + "/capture.sh"
   // Shares the [menu] surface tokens — themes that style the menu also
@@ -43,6 +47,8 @@ Item {
   property int informationRowHeight: Math.max(Style.space(44), Style.font.title + Style.spacing.controlPaddingY * 2)
   readonly property bool showDetails: root.cardWidth >= Style.space(640)
   property int historyLimit: 500
+  readonly property string deleteEntryShortcut: String(root.settings.shortcuts.deleteEntry || "Delete")
+  readonly property string clearHistoryShortcut: String(root.settings.shortcuts.clearHistory || "Shift+Delete")
 
   function initialize() {
     if (root.initialized) return
@@ -81,6 +87,12 @@ Item {
   function loadHistory(raw) {
     root.history = ClipboardHistory.parseHistory(raw)
     if (root.opened) root.rebuildDisplay()
+  }
+
+  function loadSettings(raw) {
+    var nextSettings = ClipboardConfig.parseConfig(raw)
+    if (!nextSettings.valid) console.warn("Clipboard: invalid config at " + root.configPath + "; using defaults")
+    root.settings = nextSettings
   }
 
   function saveHistory() {
@@ -277,6 +289,16 @@ Item {
     onFileChanged: reload()
   }
 
+  FileView {
+    id: configFile
+    path: root.configPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.loadSettings(text())
+    onLoadFailed: root.loadSettings("{}")
+    onFileChanged: reload()
+  }
+
   // Reap watchers left behind by a previous shell instance, then start our
   // own. The pdeathsig on the watchers makes the kernel kill them whenever
   // the shell exits, however it exits, so no further lifecycle management.
@@ -340,6 +362,20 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
 
+    Shortcut {
+      sequence: root.deleteEntryShortcut
+      enabled: root.opened && !root.clearConfirmOpen
+      autoRepeat: false
+      onActivated: root.removeDisplayIndex(root.selectedIndex)
+    }
+
+    Shortcut {
+      sequence: root.clearHistoryShortcut
+      enabled: root.opened && !root.clearConfirmOpen
+      autoRepeat: false
+      onActivated: root.requestClearHistory()
+    }
+
     Rectangle {
       anchors.fill: parent
       color: root.scrim
@@ -381,10 +417,6 @@ Item {
             event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
-            event.accepted = true
-          } else if (event.key === Qt.Key_Delete) {
-            if (event.modifiers & Qt.ShiftModifier) root.requestClearHistory()
-            else root.removeDisplayIndex(root.selectedIndex)
             event.accepted = true
           } else if (event.key === Qt.Key_Up) {
             root.select(-1)

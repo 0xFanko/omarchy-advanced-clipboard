@@ -1,0 +1,9 @@
+{
+  "shortcuts": {
+    "deleteEntry": "Delete",
+    "clearHistory": "Shift+Delete"
+  },
+  "excludedApplications": [
+    "my-sensitive-app"
+  ]
+}
