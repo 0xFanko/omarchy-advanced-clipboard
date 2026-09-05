@@ -22,9 +22,8 @@ Item {
   property var settings: ClipboardConfig.defaultConfig()
 
   property string historyPath: Quickshell.env("HOME") + "/.local/state/omarchy/clipboard-history.json"
-  property string configHome: Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config"
-  property string configPath: root.configHome + "/omarchy/clipboard.json"
   readonly property string pluginPath: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : root.omarchyPath + "/shell/plugins/clipboard"
+  readonly property string configPath: root.pluginPath + "/clipboard.json"
   property string captureScript: root.pluginPath + "/capture.sh"
   // Shares the [menu] surface tokens — themes that style the menu also
   // style the clipboard. Selected-row colors composed in the

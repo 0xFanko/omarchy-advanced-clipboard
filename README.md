@@ -17,18 +17,19 @@ It makes it easy to find and reuse previously copied text, links, files, and ima
 
 ## Configuration
 
-Les réglages utilisateur sont lus depuis :
+Les réglages utilisateur sont lus depuis la racine du plugin :
 
 ```text
-~/.config/omarchy/clipboard.json
+<racine-du-plugin>/clipboard.json
 ```
 
-Copiez le fichier d’exemple, puis adaptez-le :
+Depuis cette racine, copiez le fichier d’exemple puis adaptez-le :
 
 ```bash
-mkdir -p ~/.config/omarchy
-cp clipboard.example.json ~/.config/omarchy/clipboard.json
+cp clipboard.example.json clipboard.json
 ```
+
+`clipboard.json` est ignoré par Git afin que les réglages personnels ne bloquent pas les mises à jour du plugin.
 
 ```json
 {

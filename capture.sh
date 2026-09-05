@@ -8,7 +8,8 @@ set -o pipefail
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy"
 IMAGE_DIR="$STATE_DIR/clipboard-images"
-CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/clipboard.json"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+CONFIG_FILE="$SCRIPT_DIR/clipboard.json"
 mkdir -p "$IMAGE_DIR"
 
 types=$(wl-paste --list-types 2>/dev/null || true)
