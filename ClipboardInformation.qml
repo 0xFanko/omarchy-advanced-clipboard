@@ -36,6 +36,30 @@ Item {
       spacing: Style.space(6)
 
       Text {
+        visible: root.entry && !root.entry.previewImage
+        width: parent.width
+        text: visible ? root.entry.fullText : ""
+        textFormat: Text.PlainText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.title
+        wrapMode: Text.WrapAnywhere
+        elide: Text.ElideRight
+        maximumLineCount: 12
+      }
+
+      Image {
+        visible: root.entry && root.entry.previewImage.length > 0
+        width: parent.width
+        height: visible ? Style.space(260) : 0
+        source: visible ? root.entry.previewImage : ""
+        fillMode: Image.PreserveAspectFit
+        verticalAlignment: Image.AlignTop
+        asynchronous: true
+        smooth: true
+      }
+
+      Text {
         width: parent.width
         text: "Information"
         textFormat: Text.PlainText
@@ -43,6 +67,7 @@ Item {
         font.family: root.fontFamily
         font.pixelSize: Style.font.heading
         font.weight: Font.Medium
+        topPadding: Style.space(12)
         bottomPadding: Style.space(6)
         elide: Text.ElideRight
       }
@@ -135,30 +160,6 @@ Item {
         value: visible && root.entry.title.length > 0 ? root.entry.title : "—"
       }
 
-      Text {
-        visible: root.entry && root.entry.url.length === 0 && !root.entry.previewImage
-        width: parent.width
-        topPadding: Style.space(12)
-        text: visible ? root.entry.fullText : ""
-        textFormat: Text.PlainText
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.title
-        wrapMode: Text.WrapAnywhere
-        elide: Text.ElideRight
-        maximumLineCount: 12
-      }
-
-      Image {
-        visible: root.entry && root.entry.previewImage.length > 0
-        width: parent.width
-        height: visible ? Style.space(260) : 0
-        source: visible ? root.entry.previewImage : ""
-        fillMode: Image.PreserveAspectFit
-        verticalAlignment: Image.AlignTop
-        asynchronous: true
-        smooth: true
-      }
     }
   }
 
