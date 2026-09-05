@@ -47,8 +47,7 @@ Item {
   property int informationRowHeight: Math.max(Style.space(44), Style.font.title + Style.spacing.controlPaddingY * 2)
   readonly property bool showDetails: root.cardWidth >= Style.space(640)
   property int historyLimit: 500
-  readonly property string deleteEntryShortcut: String(root.settings.shortcuts.deleteEntry || "Delete")
-  readonly property string clearHistoryShortcut: String(root.settings.shortcuts.clearHistory || "Shift+Delete")
+  readonly property var shortcuts: root.settings.shortcuts
 
   function initialize() {
     if (root.initialized) return
@@ -69,6 +68,11 @@ Item {
   function close() {
     root.cancelClearHistory()
     root.opened = false
+  }
+
+  function clearSearchOrClose() {
+    if (root.filterText) root.setFilter("")
+    else root.close()
   }
 
   function toggle() {
@@ -242,6 +246,19 @@ Item {
     root.openSelected(row)
   }
 
+  function pasteCurrentEntry() {
+    if (root.cursorActive) root.activateIndex(root.selectedIndex)
+    else if (displayModel.count > 0) root.cursorActive = true
+  }
+
+  function copyCurrentEntry() {
+    if (root.cursorActive) root.copyIndex(root.selectedIndex)
+  }
+
+  function openCurrentEntry() {
+    if (root.cursorActive) root.openIndex(root.selectedIndex)
+  }
+
   function applySelected(row) {
     if (!row) return
     root.opened = false
@@ -363,14 +380,78 @@ Item {
     exclusionMode: ExclusionMode.Ignore
 
     Shortcut {
-      sequence: root.deleteEntryShortcut
+      sequence: String(root.shortcuts.close)
+      enabled: root.opened && !root.clearConfirmOpen
+      autoRepeat: false
+      onActivated: root.clearSearchOrClose()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.previousEntry)
+      enabled: root.opened && !root.clearConfirmOpen
+      onActivated: root.select(-1)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.nextEntry)
+      enabled: root.opened && !root.clearConfirmOpen
+      onActivated: root.select(1)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.previousPage)
+      enabled: root.opened && !root.clearConfirmOpen
+      onActivated: root.select(-6)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.nextPage)
+      enabled: root.opened && !root.clearConfirmOpen
+      onActivated: root.select(6)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.firstEntry)
+      enabled: root.opened && !root.clearConfirmOpen
+      onActivated: root.selectAbsolute(0)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.lastEntry)
+      enabled: root.opened && !root.clearConfirmOpen
+      onActivated: root.selectAbsolute(displayModel.count - 1)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.pasteEntry)
+      enabled: root.opened && !root.clearConfirmOpen
+      autoRepeat: false
+      onActivated: root.pasteCurrentEntry()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.copyEntry)
+      enabled: root.opened && !root.clearConfirmOpen
+      autoRepeat: false
+      onActivated: root.copyCurrentEntry()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.openEntry)
+      enabled: root.opened && !root.clearConfirmOpen
+      autoRepeat: false
+      onActivated: root.openCurrentEntry()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.deleteEntry)
       enabled: root.opened && !root.clearConfirmOpen
       autoRepeat: false
       onActivated: root.removeDisplayIndex(root.selectedIndex)
     }
 
     Shortcut {
-      sequence: root.clearHistoryShortcut
+      sequence: String(root.shortcuts.clearHistory)
       enabled: root.opened && !root.clearConfirmOpen
       autoRepeat: false
       onActivated: root.requestClearHistory()
@@ -411,36 +492,8 @@ Item {
             return
           }
 
-          if (event.key === Qt.Key_Escape) {
-            if (root.filterText) root.setFilter("")
-            else root.close()
-            event.accepted = true
-          } else if (Util.editsFilter(event, root.filterText)) {
+          if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.select(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.select(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageUp) {
-            root.select(-6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageDown) {
-            root.select(6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Home) {
-            root.selectAbsolute(0)
-            event.accepted = true
-          } else if (event.key === Qt.Key_End) {
-            root.selectAbsolute(displayModel.count - 1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.cursorActive && (event.modifiers & Qt.AltModifier)) root.openIndex(root.selectedIndex)
-            else if (root.cursorActive && (event.modifiers & Qt.ShiftModifier)) root.copyIndex(root.selectedIndex)
-            else if (root.cursorActive) root.activateIndex(root.selectedIndex)
-            else if (displayModel.count > 0) root.cursorActive = true
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
             root.setFilter(root.filterText + event.text)

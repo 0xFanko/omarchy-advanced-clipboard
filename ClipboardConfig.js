@@ -1,17 +1,39 @@
-var defaultDeleteEntryShortcut = "Delete"
-var defaultClearHistoryShortcut = "Shift+Delete"
 var maxExcludedApplications = 100
 var maxShortcutLength = 64
 
+function defaultShortcuts() {
+  return {
+    close: "Escape",
+    previousEntry: "Up",
+    nextEntry: "Down",
+    previousPage: "PgUp",
+    nextPage: "PgDown",
+    firstEntry: "Home",
+    lastEntry: "End",
+    pasteEntry: "Return",
+    copyEntry: "Shift+Return",
+    openEntry: "Alt+Return",
+    deleteEntry: "Delete",
+    clearHistory: "Shift+Delete"
+  }
+}
+
 function defaultConfig() {
   return {
-    shortcuts: {
-      deleteEntry: defaultDeleteEntryShortcut,
-      clearHistory: defaultClearHistoryShortcut
-    },
+    shortcuts: defaultShortcuts(),
     excludedApplications: [],
     valid: true
   }
+}
+
+function shortcutsAreUnique(shortcuts) {
+  var seen = {}
+  for (var key in shortcuts) {
+    var sequence = String(shortcuts[key] || "").trim().toLowerCase()
+    if (seen[sequence]) return false
+    seen[sequence] = true
+  }
+  return true
 }
 
 function normalizedShortcut(value, fallback) {
@@ -56,10 +78,13 @@ function parseConfig(raw) {
   var shortcuts = parsed.shortcuts && typeof parsed.shortcuts === "object" && !Array.isArray(parsed.shortcuts)
     ? parsed.shortcuts : {}
   var config = defaultConfig()
-  config.shortcuts.deleteEntry = normalizedShortcut(shortcuts.deleteEntry, defaultDeleteEntryShortcut)
-  config.shortcuts.clearHistory = normalizedShortcut(shortcuts.clearHistory, defaultClearHistoryShortcut)
-  if (config.shortcuts.clearHistory.toLowerCase() === config.shortcuts.deleteEntry.toLowerCase())
-    config.shortcuts.clearHistory = defaultClearHistoryShortcut
+  var defaults = defaultShortcuts()
+  for (var key in defaults)
+    config.shortcuts[key] = normalizedShortcut(shortcuts[key], defaults[key])
+  if (!shortcutsAreUnique(config.shortcuts)) {
+    config.shortcuts = defaults
+    config.valid = false
+  }
   config.excludedApplications = normalizedApplications(parsed.excludedApplications)
   return config
 }
