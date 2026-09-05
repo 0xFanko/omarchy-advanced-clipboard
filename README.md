@@ -1,19 +1,19 @@
 # Omarchy Clipboard
 
-Plugin pour [Omarchy](https://omarchy.org/) qui améliore l’historique du presse-papiers.
+A plugin for [Omarchy](https://omarchy.org/) that improves the clipboard history experience.
 
-Il permet de retrouver et réutiliser rapidement les textes, liens, fichiers et images précédemment copiés depuis l’interface Omarchy.
+It makes it easy to find and reuse previously copied text, links, files, and images directly from the Omarchy interface.
 
-## Fonctionnalités
+## Features
 
-- recherche dans l’historique du presse-papiers ;
-- aperçu des textes, fichiers et images ;
-- détection des liens ;
-- affichage de l’application source ;
-- informations détaillées : type, date, heure, URL et titre ;
-- suppression d’une entrée ou de tout l’historique ;
-- tous les raccourcis internes personnalisables ;
-- exclusion d’applications de l’historique.
+- search through clipboard history;
+- preview text, files, and images;
+- detect copied links;
+- display the source application;
+- show detailed information such as type, date, time, URL, and title;
+- delete one entry or clear the entire history;
+- customize every internal keyboard shortcut;
+- exclude selected applications from clipboard history.
 
 ## Configuration
 
