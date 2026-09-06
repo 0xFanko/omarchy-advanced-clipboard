@@ -1,5 +1,6 @@
 var maxExcludedApplications = 100
 var maxShortcutLength = 64
+var maxHistoryRetentionDays = 36500
 
 function defaultShortcuts() {
   return {
@@ -24,8 +25,15 @@ function defaultConfig() {
   return {
     shortcuts: defaultShortcuts(),
     excludedApplications: [],
+    historyRetentionDays: 0,
     valid: true
   }
+}
+
+function normalizedHistoryRetentionDays(value) {
+  if (value === undefined || value === null) return 0
+  if (typeof value !== "number" || !isFinite(value) || Math.floor(value) !== value) return 0
+  return Math.max(0, Math.min(maxHistoryRetentionDays, value))
 }
 
 function shortcutsAreUnique(shortcuts) {
@@ -88,6 +96,7 @@ function parseConfig(raw) {
     config.valid = false
   }
   config.excludedApplications = normalizedApplications(parsed.excludedApplications)
+  config.historyRetentionDays = normalizedHistoryRetentionDays(parsed.historyRetentionDays)
   return config
 }
 

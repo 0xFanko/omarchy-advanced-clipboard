@@ -59,6 +59,27 @@ function parseHistory(raw) {
   }
 }
 
+function retainRecentEntries(history, retentionDays, now) {
+  var values = Array.isArray(history) ? history : []
+  var days = Number(retentionDays)
+  if (!isFinite(days) || days <= 0) return values.slice()
+
+  var reference = now === undefined || now === null ? Date.now() : new Date(now).getTime()
+  if (!isFinite(reference)) reference = Date.now()
+  var cutoff = reference - Math.floor(days) * 24 * 60 * 60 * 1000
+  var next = []
+
+  for (var i = 0; i < values.length; i++) {
+    var entry = normalizeEntry(values[i])
+    if (!entry) continue
+    var capturedAt = Date.parse(String(entry.capturedAt || ""))
+    // Legacy entries did not include a timestamp. Preserve them rather than
+    // deleting data whose age cannot be established.
+    if (!isFinite(capturedAt) || capturedAt >= cutoff) next.push(entry)
+  }
+  return next
+}
+
 function addEntry(history, entry, limit) {
   var normalized = normalizeEntry(entry)
   var max = limit === undefined || limit === null ? 100 : Number(limit)
@@ -303,6 +324,7 @@ if (typeof module !== "undefined") {
     normalizeEntry: normalizeEntry,
     entryKey: entryKey,
     parseHistory: parseHistory,
+    retainRecentEntries: retainRecentEntries,
     addEntry: addEntry,
     removeEntryAt: removeEntryAt,
     updateTextEntry: updateTextEntry,

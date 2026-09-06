@@ -18,6 +18,7 @@ assert.equal(defaults.shortcuts.saveEdit, "Ctrl+S")
 assert.equal(defaults.shortcuts.deleteEntry, "Delete")
 assert.equal(defaults.shortcuts.clearHistory, "Shift+Delete")
 assert.deepEqual(defaults.excludedApplications, [])
+assert.equal(defaults.historyRetentionDays, 0)
 
 const custom = ClipboardConfig.parseConfig(JSON.stringify({
   shortcuts: {
@@ -36,7 +37,8 @@ const custom = ClipboardConfig.parseConfig(JSON.stringify({
     deleteEntry: "Ctrl+X",
     clearHistory: "Ctrl+Shift+X"
   },
-  excludedApplications: ["Brave Browser", "org.keepassxc.KeePassXC", "brave browser", "", 42]
+  excludedApplications: ["Brave Browser", "org.keepassxc.KeePassXC", "brave browser", "", 42],
+  historyRetentionDays: 30
 }))
 assert.equal(custom.shortcuts.deleteEntry, "Ctrl+X")
 assert.equal(custom.shortcuts.clearHistory, "Ctrl+Shift+X")
@@ -45,6 +47,7 @@ assert.equal(custom.shortcuts.pasteEntry, "Ctrl+P")
 assert.equal(custom.shortcuts.editEntry, "Ctrl+I")
 assert.equal(custom.shortcuts.saveEdit, "Ctrl+Shift+S")
 assert.deepEqual(custom.excludedApplications, ["Brave Browser", "org.keepassxc.KeePassXC"])
+assert.equal(custom.historyRetentionDays, 30)
 assert.equal(ClipboardConfig.isApplicationExcluded(custom, "brave-browser", "brave browser"), true)
 assert.equal(ClipboardConfig.isApplicationExcluded(custom, "org.keepassxc.KeePassXC", "KeePassXC"), true)
 assert.equal(ClipboardConfig.isApplicationExcluded(custom, "firefox", "Firefox"), false)
@@ -57,5 +60,10 @@ assert.equal(conflicting.shortcuts.clearHistory, "Shift+Delete")
 const malformed = ClipboardConfig.parseConfig("{")
 assert.equal(malformed.valid, false)
 assert.equal(malformed.shortcuts.deleteEntry, "Delete")
+
+assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":-1}').historyRetentionDays, 0)
+assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":1.5}').historyRetentionDays, 0)
+assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":"30"}').historyRetentionDays, 0)
+assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":999999}').historyRetentionDays, 36500)
 
 console.log("ClipboardConfig tests: OK")

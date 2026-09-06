@@ -53,6 +53,16 @@ assert.equal(ClipboardHistory.captureDate("Friday 12:30"), "—")
 assert.equal(ClipboardHistory.captureTime("Friday 12:30"), "12:30")
 assert.equal(ClipboardHistory.imagePreviewText({ type: "image", mime: "image/png", capturedAt: "2026-09-04T14:37:52+02:00" }), "Screenshot from 04/09/2026 14:37")
 
+const retentionNow = "2026-09-06T12:00:00Z"
+const retained = ClipboardHistory.retainRecentEntries([
+  { type: "text", text: "recent", capturedAt: "2026-09-05T12:00:00Z" },
+  { type: "text", text: "boundary", capturedAt: "2026-09-04T12:00:00Z" },
+  { type: "text", text: "expired", capturedAt: "2026-09-04T11:59:59Z" },
+  { type: "text", text: "legacy" }
+], 2, retentionNow)
+assert.deepEqual(retained.map(entry => entry.text), ["recent", "boundary", "legacy"])
+assert.equal(ClipboardHistory.retainRecentEntries(retained, 0, retentionNow).length, 3)
+
 const longEntry = {
   type: "text",
   text: "x".repeat(9000),

@@ -50,12 +50,18 @@ cp clipboard.example.json clipboard.json
     "deleteEntry": "Ctrl+X",
     "clearHistory": "Ctrl+Shift+X"
   },
+  "historyRetentionDays": 30,
   "excludedApplications": [
     "Brave Browser",
     "org.keepassxc.KeePassXC"
   ]
 }
 ```
+
+`historyRetentionDays` fixe l’âge maximal des entrées en jours. La valeur `0`
+(valeur par défaut) conserve l’historique sans limite de durée; la limite de
+500 entrées reste appliquée. Les anciennes entrées sans horodatage sont
+conservées, car leur âge ne peut pas être déterminé de façon fiable.
 
 Les raccourcis utilisent la syntaxe Qt (`Ctrl+X`, `Shift+Delete`, etc.). Ils doivent être uniques et la configuration est rechargée automatiquement. Le raccourci d’ouverture global `Super+Ctrl+V` reste géré séparément par Hyprland.
 

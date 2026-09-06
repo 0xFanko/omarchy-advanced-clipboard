@@ -170,7 +170,8 @@ Item {
   }
 
   function loadHistory(raw) {
-    root.history = ClipboardHistory.parseHistory(raw)
+    root.history = ClipboardHistory.retainRecentEntries(
+      ClipboardHistory.parseHistory(raw), root.settings.historyRetentionDays)
     if (root.opened && !root.editMode) root.rebuildDisplay()
   }
 
@@ -178,9 +179,16 @@ Item {
     var nextSettings = ClipboardConfig.parseConfig(raw)
     if (!nextSettings.valid) console.warn("Clipboard: invalid config at " + root.configPath + "; using defaults")
     root.settings = nextSettings
+    var retained = ClipboardHistory.retainRecentEntries(root.history, root.settings.historyRetentionDays)
+    if (retained.length !== root.history.length) {
+      root.history = retained
+      root.saveHistory()
+      if (root.opened && !root.editMode) root.rebuildDisplay()
+    }
   }
 
   function saveHistory() {
+    root.history = ClipboardHistory.retainRecentEntries(root.history, root.settings.historyRetentionDays)
     historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
   }
 
@@ -188,7 +196,9 @@ Item {
     var normalized = ClipboardHistory.normalizeEntry(entry)
     if (!normalized) return
 
-    root.history = ClipboardHistory.addEntry(root.history, normalized, root.historyLimit)
+    root.history = ClipboardHistory.retainRecentEntries(
+      ClipboardHistory.addEntry(root.history, normalized, root.historyLimit),
+      root.settings.historyRetentionDays)
     root.saveHistory()
     if (root.opened && !root.editMode) root.rebuildDisplay()
   }
