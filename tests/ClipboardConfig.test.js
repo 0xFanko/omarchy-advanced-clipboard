@@ -62,8 +62,12 @@ assert.equal(malformed.valid, false)
 assert.equal(malformed.shortcuts.deleteEntry, "Delete")
 
 assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":-1}').historyRetentionDays, 0)
+assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":-1}').valid, false)
 assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":1.5}').historyRetentionDays, 0)
+assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":1.5}').valid, false)
 assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":"30"}').historyRetentionDays, 0)
+assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":"30"}').valid, false)
 assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":999999}').historyRetentionDays, 36500)
+assert.equal(ClipboardConfig.parseConfig('{"historyRetentionDays":999999}').valid, false)
 
 console.log("ClipboardConfig tests: OK")

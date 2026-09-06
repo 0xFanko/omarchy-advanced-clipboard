@@ -26,7 +26,9 @@ Item {
   property bool initialized: false
   property var settings: ClipboardConfig.defaultConfig()
 
-  property string historyPath: Quickshell.env("HOME") + "/.local/state/omarchy/clipboard-history.json"
+  readonly property string stateRoot: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
+  property string historyPath: root.stateRoot + "/omarchy/clipboard-history.json"
+  property string imageDirectory: root.stateRoot + "/omarchy/clipboard-images"
   readonly property string pluginPath: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : root.omarchyPath + "/shell/plugins/clipboard"
   readonly property string configPath: root.pluginPath + "/clipboard.json"
   property string captureScript: root.pluginPath + "/capture.sh"
@@ -61,6 +63,7 @@ Item {
 
   function open(payloadJson) {
     root.resetEditState()
+    root.applyHistoryRetention(root.history, true)
     root.opened = true
     root.filterText = ""
     root.selectedIndex = 0
@@ -170,25 +173,39 @@ Item {
   }
 
   function loadHistory(raw) {
-    root.history = ClipboardHistory.retainRecentEntries(
-      ClipboardHistory.parseHistory(raw), root.settings.historyRetentionDays)
+    root.applyHistoryRetention(ClipboardHistory.parseHistory(raw), true)
     if (root.opened && !root.editMode) root.rebuildDisplay()
+  }
+
+  function removeExpiredImageFiles(paths) {
+    var command = ["rm", "-f", "--"]
+    for (var i = 0; i < paths.length; i++) {
+      var path = String(paths[i] || "")
+      if (ClipboardHistory.isManagedImagePath(path, root.imageDirectory)) command.push(path)
+    }
+    if (command.length > 3) Quickshell.execDetached(command)
+  }
+
+  function applyHistoryRetention(values, persistChanges) {
+    var result = ClipboardHistory.historyRetentionResult(values, root.settings.historyRetentionDays)
+    var changed = result.entries.length !== values.length
+    root.history = result.entries
+    root.removeExpiredImageFiles(result.expiredImagePaths)
+    if (changed && persistChanges)
+      historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
+    return changed
   }
 
   function loadSettings(raw) {
     var nextSettings = ClipboardConfig.parseConfig(raw)
     if (!nextSettings.valid) console.warn("Clipboard: invalid config at " + root.configPath + "; using defaults")
     root.settings = nextSettings
-    var retained = ClipboardHistory.retainRecentEntries(root.history, root.settings.historyRetentionDays)
-    if (retained.length !== root.history.length) {
-      root.history = retained
-      root.saveHistory()
-      if (root.opened && !root.editMode) root.rebuildDisplay()
-    }
+    var changed = root.applyHistoryRetention(root.history, true)
+    if (changed && root.opened && !root.editMode) root.rebuildDisplay()
   }
 
   function saveHistory() {
-    root.history = ClipboardHistory.retainRecentEntries(root.history, root.settings.historyRetentionDays)
+    root.applyHistoryRetention(root.history, false)
     historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
   }
 
@@ -196,9 +213,7 @@ Item {
     var normalized = ClipboardHistory.normalizeEntry(entry)
     if (!normalized) return
 
-    root.history = ClipboardHistory.retainRecentEntries(
-      ClipboardHistory.addEntry(root.history, normalized, root.historyLimit),
-      root.settings.historyRetentionDays)
+    root.history = ClipboardHistory.addEntry(root.history, normalized, root.historyLimit)
     root.saveHistory()
     if (root.opened && !root.editMode) root.rebuildDisplay()
   }

@@ -62,6 +62,31 @@ const retained = ClipboardHistory.retainRecentEntries([
 ], 2, retentionNow)
 assert.deepEqual(retained.map(entry => entry.text), ["recent", "boundary", "legacy"])
 assert.equal(ClipboardHistory.retainRecentEntries(retained, 0, retentionNow).length, 3)
+const retentionResult = ClipboardHistory.historyRetentionResult([
+  { type: "image", path: "/state/clipboard-images/recent.png", capturedAt: "2026-09-05T12:00:00Z" },
+  { type: "image", path: "/state/clipboard-images/expired.png", capturedAt: "2026-09-01T12:00:00Z" },
+  { type: "text", text: "expired text", capturedAt: "2026-09-01T12:00:00Z" }
+], 2, retentionNow)
+assert.deepEqual(retentionResult.entries.map(entry => entry.path || entry.text), ["/state/clipboard-images/recent.png"])
+assert.deepEqual(retentionResult.expiredImagePaths, ["/state/clipboard-images/expired.png"])
+const sharedImagePath = "/state/clipboard-images/shared.png"
+const sharedImageResult = ClipboardHistory.historyRetentionResult([
+  { type: "image", path: sharedImagePath, capturedAt: "2026-09-05T12:00:00Z" },
+  { type: "image", path: sharedImagePath, capturedAt: "2026-09-01T12:00:00Z" }
+], 2, retentionNow)
+assert.equal(sharedImageResult.entries.length, 1)
+assert.deepEqual(sharedImageResult.expiredImagePaths, [])
+const managedImageHash = "a".repeat(64)
+assert.equal(ClipboardHistory.isManagedImagePath(
+  "/state/clipboard-images/" + managedImageHash + ".png", "/state/clipboard-images"), true)
+assert.equal(ClipboardHistory.isManagedImagePath(
+  "/state/clipboard-images/" + managedImageHash + ".jpg", "/state/clipboard-images/"), true)
+assert.equal(ClipboardHistory.isManagedImagePath(
+  "/state/clipboard-images/../../important", "/state/clipboard-images"), false)
+assert.equal(ClipboardHistory.isManagedImagePath(
+  "/state/clipboard-images/clipboard-123-456.png", "/state/clipboard-images"), false)
+assert.equal(ClipboardHistory.isManagedImagePath(
+  "/other/" + managedImageHash + ".png", "/state/clipboard-images"), false)
 
 const longEntry = {
   type: "text",

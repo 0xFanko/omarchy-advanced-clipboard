@@ -59,15 +59,16 @@ function parseHistory(raw) {
   }
 }
 
-function retainRecentEntries(history, retentionDays, now) {
+function historyRetentionResult(history, retentionDays, now) {
   var values = Array.isArray(history) ? history : []
   var days = Number(retentionDays)
-  if (!isFinite(days) || days <= 0) return values.slice()
+  if (!isFinite(days) || days <= 0) return { entries: values.slice(), expiredImagePaths: [] }
 
   var reference = now === undefined || now === null ? Date.now() : new Date(now).getTime()
   if (!isFinite(reference)) reference = Date.now()
   var cutoff = reference - Math.floor(days) * 24 * 60 * 60 * 1000
   var next = []
+  var expiredImageCandidates = []
 
   for (var i = 0; i < values.length; i++) {
     var entry = normalizeEntry(values[i])
@@ -76,8 +77,32 @@ function retainRecentEntries(history, retentionDays, now) {
     // Legacy entries did not include a timestamp. Preserve them rather than
     // deleting data whose age cannot be established.
     if (!isFinite(capturedAt) || capturedAt >= cutoff) next.push(entry)
+    else if (entry.type === "image" && entry.path && expiredImageCandidates.indexOf(String(entry.path)) < 0)
+      expiredImageCandidates.push(String(entry.path))
   }
-  return next
+  var retainedImagePaths = []
+  for (var j = 0; j < next.length; j++) {
+    if (next[j].type === "image" && next[j].path && retainedImagePaths.indexOf(String(next[j].path)) < 0)
+      retainedImagePaths.push(String(next[j].path))
+  }
+  var expiredImagePaths = []
+  for (var k = 0; k < expiredImageCandidates.length; k++) {
+    if (retainedImagePaths.indexOf(expiredImageCandidates[k]) < 0)
+      expiredImagePaths.push(expiredImageCandidates[k])
+  }
+  return { entries: next, expiredImagePaths: expiredImagePaths }
+}
+
+function retainRecentEntries(history, retentionDays, now) {
+  return historyRetentionResult(history, retentionDays, now).entries
+}
+
+function isManagedImagePath(path, imageDirectory) {
+  var prefix = String(imageDirectory || "").replace(/\/$/, "") + "/"
+  var value = String(path || "")
+  if (prefix === "/" || value.indexOf(prefix) !== 0) return false
+  var basename = value.substring(prefix.length)
+  return /^[0-9a-f]{64}\.(png|jpg|webp|gif|bmp|tiff)$/i.test(basename)
 }
 
 function addEntry(history, entry, limit) {
@@ -324,7 +349,9 @@ if (typeof module !== "undefined") {
     normalizeEntry: normalizeEntry,
     entryKey: entryKey,
     parseHistory: parseHistory,
+    historyRetentionResult: historyRetentionResult,
     retainRecentEntries: retainRecentEntries,
+    isManagedImagePath: isManagedImagePath,
     addEntry: addEntry,
     removeEntryAt: removeEntryAt,
     updateTextEntry: updateTextEntry,

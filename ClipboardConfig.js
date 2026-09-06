@@ -31,9 +31,10 @@ function defaultConfig() {
 }
 
 function normalizedHistoryRetentionDays(value) {
-  if (value === undefined || value === null) return 0
-  if (typeof value !== "number" || !isFinite(value) || Math.floor(value) !== value) return 0
-  return Math.max(0, Math.min(maxHistoryRetentionDays, value))
+  if (value === undefined || value === null) return { value: 0, valid: true }
+  if (typeof value !== "number" || !isFinite(value) || Math.floor(value) !== value || value < 0)
+    return { value: 0, valid: false }
+  return { value: Math.min(maxHistoryRetentionDays, value), valid: value <= maxHistoryRetentionDays }
 }
 
 function shortcutsAreUnique(shortcuts) {
@@ -96,7 +97,9 @@ function parseConfig(raw) {
     config.valid = false
   }
   config.excludedApplications = normalizedApplications(parsed.excludedApplications)
-  config.historyRetentionDays = normalizedHistoryRetentionDays(parsed.historyRetentionDays)
+  var retention = normalizedHistoryRetentionDays(parsed.historyRetentionDays)
+  config.historyRetentionDays = retention.value
+  if (!retention.valid) config.valid = false
   return config
 }
 

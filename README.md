@@ -61,7 +61,12 @@ cp clipboard.example.json clipboard.json
 `historyRetentionDays` fixe l’âge maximal des entrées en jours. La valeur `0`
 (valeur par défaut) conserve l’historique sans limite de durée; la limite de
 500 entrées reste appliquée. Les anciennes entrées sans horodatage sont
-conservées, car leur âge ne peut pas être déterminé de façon fiable.
+conservées, car leur âge ne peut pas être déterminé de façon fiable. Utilisez
+un entier JSON compris entre `0` et `36500`. Une valeur négative, fractionnaire
+ou textuelle est invalide et revient à `0`; une valeur supérieure est plafonnée
+à `36500`. Les fichiers d’image capturés sont supprimés avec leur entrée
+expirée, tandis que les fichiers externes référencés par une URI `file://` ne
+sont jamais supprimés.
 
 Les raccourcis utilisent la syntaxe Qt (`Ctrl+X`, `Shift+Delete`, etc.). Ils doivent être uniques et la configuration est rechargée automatiquement. Le raccourci d’ouverture global `Super+Ctrl+V` reste géré séparément par Hyprland.
 
