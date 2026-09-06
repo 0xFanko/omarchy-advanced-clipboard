@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import QtQuick
 import qs.Commons
 
@@ -16,7 +17,16 @@ Item {
   property string editError: ""
   property string saveShortcut: "Ctrl+S"
   property string cancelShortcut: "Escape"
+  property string linkPreviewHelper: ""
+  property bool previewEnabled: true
   property alias editedText: editField.text
+  property string linkPreviewState: "idle"
+  property string linkPreviewTitle: ""
+  property string linkPreviewDescription: ""
+  property string linkPreviewError: ""
+  property int linkPreviewSerial: 0
+
+  readonly property bool hasLink: root.entry && root.entry.typeLabel === "Link" && /^https?:\/\//i.test(String(root.entry.url || ""))
 
   function focusEditor() {
     if (root.editing) editField.forceActiveFocus()
@@ -30,13 +40,85 @@ Item {
     return Quickshell.iconPath(value, true)
   }
 
-  onEntryChanged: informationFlick.contentY = 0
-  onEditingChanged: {
-    if (!root.editing) return
-    editField.text = root.draftText
-    informationFlick.contentY = 0
-    Qt.callLater(function() { root.focusEditor() })
+  function resetLinkPreview() {
+    root.linkPreviewSerial++
+    linkPreviewProcess.running = false
+    linkPreviewTimeout.stop()
+    root.linkPreviewState = "idle"
+    root.linkPreviewTitle = ""
+    root.linkPreviewDescription = ""
+    root.linkPreviewError = ""
   }
+
+  function loadLinkPreview() {
+    root.resetLinkPreview()
+    if (!root.previewEnabled || !root.hasLink || root.editing || !root.linkPreviewHelper) return
+
+    var serial = root.linkPreviewSerial
+    root.linkPreviewState = "loading"
+    linkPreviewTimeout.restart()
+    linkPreviewProcess.command = [root.linkPreviewHelper, String(root.entry.url), String(serial)]
+    linkPreviewProcess.running = true
+  }
+
+  function handleLinkPreview(raw) {
+    if (!String(raw || "").trim()) return
+    var payload
+    try { payload = JSON.parse(raw) } catch (error) { return }
+    if (!payload || Number(payload.serial) !== root.linkPreviewSerial) return
+
+    linkPreviewTimeout.stop()
+    root.linkPreviewTitle = String(payload.title || "")
+    root.linkPreviewDescription = String(payload.description || "")
+    root.linkPreviewError = String(payload.error || "")
+    root.linkPreviewState = payload.state === "ready" || payload.state === "empty" || payload.state === "error"
+      ? payload.state : "error"
+  }
+
+  Process {
+    id: linkPreviewProcess
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handleLinkPreview(text)
+    }
+  }
+
+  Timer {
+    id: linkPreviewTimeout
+    interval: 10000
+    repeat: false
+    onTriggered: {
+      root.linkPreviewSerial++
+      linkPreviewProcess.running = false
+      root.linkPreviewState = "error"
+      root.linkPreviewError = "The preview helper timed out."
+    }
+  }
+
+  onEntryChanged: {
+    // Invalidate callbacks immediately; the deferred load may run on the next
+    // event-loop turn after the selected model row has changed.
+    root.linkPreviewSerial++
+    informationFlick.contentY = 0
+    Qt.callLater(root.loadLinkPreview)
+  }
+  onEditingChanged: {
+    if (root.editing) {
+      root.resetLinkPreview()
+      editField.text = root.draftText
+      informationFlick.contentY = 0
+      Qt.callLater(function() { root.focusEditor() })
+    } else {
+      Qt.callLater(root.loadLinkPreview)
+    }
+  }
+  onPreviewEnabledChanged: {
+    if (root.previewEnabled) Qt.callLater(root.loadLinkPreview)
+    else root.resetLinkPreview()
+  }
+
+  Component.onDestruction: root.resetLinkPreview()
 
   Flickable {
     id: informationFlick
@@ -73,6 +155,75 @@ Item {
         verticalAlignment: Image.AlignTop
         asynchronous: true
         smooth: true
+      }
+
+      Rectangle {
+        visible: root.previewEnabled && root.hasLink && !root.editing && root.linkPreviewState !== "idle"
+        width: parent.width
+        height: visible ? linkPreviewContent.implicitHeight + Style.space(24) : 0
+        radius: root.cornerRadius
+        color: Util.alpha(root.borderColor, 0.10)
+
+        Column {
+          id: linkPreviewContent
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: parent.top
+          anchors.margins: Style.space(12)
+          spacing: Style.space(6)
+
+          Text {
+            visible: root.linkPreviewState === "loading"
+            width: parent.width
+            text: "Loading page preview…"
+            textFormat: Text.PlainText
+            color: root.foreground
+            opacity: 0.68
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+          }
+
+          Text {
+            visible: root.linkPreviewState === "ready" && root.linkPreviewTitle.length > 0
+            width: parent.width
+            text: root.linkPreviewTitle
+            textFormat: Text.PlainText
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.heading
+            font.weight: Font.Medium
+            wrapMode: Text.Wrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
+          }
+
+          Text {
+            visible: root.linkPreviewState === "ready" && root.linkPreviewDescription.length > 0
+            width: parent.width
+            text: root.linkPreviewDescription
+            textFormat: Text.PlainText
+            color: root.foreground
+            opacity: 0.72
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+            maximumLineCount: 4
+            elide: Text.ElideRight
+          }
+
+          Text {
+            visible: root.linkPreviewState === "empty" || root.linkPreviewState === "error"
+            width: parent.width
+            text: root.linkPreviewState === "empty" ? "No page details are available." : "Preview unavailable. " + root.linkPreviewError
+            textFormat: Text.PlainText
+            color: root.foreground
+            opacity: 0.68
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+          }
+        }
       }
 
       Text {

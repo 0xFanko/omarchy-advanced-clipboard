@@ -794,6 +794,8 @@ Item {
                 editError: root.editError
                 saveShortcut: String(root.shortcuts.saveEdit)
                 cancelShortcut: String(root.shortcuts.close)
+                linkPreviewHelper: root.pluginPath + "/link_preview.py"
+                previewEnabled: root.opened
               }
             }
           }

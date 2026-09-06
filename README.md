@@ -8,7 +8,7 @@ It makes it easy to find and reuse previously copied text, links, files, and ima
 
 - search through clipboard history;
 - preview text, files, and images;
-- detect copied links;
+- detect copied links and load a lightweight page preview when metadata is available;
 - display the source application;
 - show detailed information such as type, date, time, URL, and title;
 - edit text entries directly from the clipboard history;
@@ -95,6 +95,14 @@ hyprctl clients -j | jq -r '.[].class' | sort -u
 ```
 
 Les nouvelles copies provenant d’une application exclue ne sont pas enregistrées. Les anciennes entrées restent présentes dans l’historique.
+
+### Aperçu des liens
+
+Pour une entrée HTTP(S), le panneau d’information tente de récupérer le titre et la description de la page. La récupération s’exécute hors du processus d’interface dans `link_preview.py`. Chaque résolution DNS et chaque redirection doit rester sur une adresse publique; les réseaux privés, loopback, link-local, multicast et les services de métadonnées sont bloqués. L’adresse validée est épinglée pour la connexion afin de limiter le DNS rebinding. La requête expire après huit secondes, accepte au plus trois redirections et accumule au maximum 512 Kio.
+
+Le contenu distant est toujours affiché comme texte brut et n’est jamais exécuté. Les images Open Graph ne sont volontairement pas téléchargées. Une erreur réseau ou une page sans métadonnées n’empêche pas les actions copier, coller, ouvrir et modifier.
+
+L’aperçu nécessite `python3` et `curl`, installés par défaut sur Omarchy. Il n’utilise aucun service externe ou payant et ignore les variables de proxy pour conserver l’épinglage réseau.
 
 ## Projet
 
