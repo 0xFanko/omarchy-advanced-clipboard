@@ -105,6 +105,28 @@ function isManagedImagePath(path, imageDirectory) {
   return /^[0-9a-f]{64}\.(png|jpg|webp|gif|bmp|tiff)$/i.test(basename)
 }
 
+function persistedImageCleanupResult(paths, history, imageDirectory) {
+  var values = Array.isArray(history) ? history : []
+  var referenced = {}
+  for (var i = 0; i < values.length; i++) {
+    var entry = normalizeEntry(values[i])
+    if (entry && entry.type === "image" && entry.path) referenced[String(entry.path)] = true
+  }
+
+  var deletablePaths = []
+  var referencedPaths = []
+  var seen = {}
+  var candidates = Array.isArray(paths) ? paths : []
+  for (var j = 0; j < candidates.length; j++) {
+    var path = String(candidates[j] || "")
+    if (seen[path] || !isManagedImagePath(path, imageDirectory)) continue
+    seen[path] = true
+    if (referenced[path]) referencedPaths.push(path)
+    else deletablePaths.push(path)
+  }
+  return { deletablePaths: deletablePaths, referencedPaths: referencedPaths }
+}
+
 function addEntry(history, entry, limit) {
   var normalized = normalizeEntry(entry)
   var max = limit === undefined || limit === null ? 100 : Number(limit)
@@ -145,8 +167,18 @@ function updateTextEntry(history, index, text) {
   var existing = normalizeEntry(values[target])
   if (!existing || existing.type !== "text") return values.slice()
 
-  var next = values.slice()
-  next[target] = withSourceMetadata({ type: "text", text: nextText }, existing)
+  var updated = withSourceMetadata({ type: "text", text: nextText }, existing)
+  var updatedKey = entryKey(updated)
+  var next = []
+  for (var i = 0; i < values.length; i++) {
+    if (i === target) {
+      next.push(updated)
+      continue
+    }
+    var candidate = normalizeEntry(values[i])
+    if (!candidate || entryKey(candidate) === updatedKey) continue
+    next.push(candidate)
+  }
   return next
 }
 
@@ -352,6 +384,7 @@ if (typeof module !== "undefined") {
     historyRetentionResult: historyRetentionResult,
     retainRecentEntries: retainRecentEntries,
     isManagedImagePath: isManagedImagePath,
+    persistedImageCleanupResult: persistedImageCleanupResult,
     addEntry: addEntry,
     removeEntryAt: removeEntryAt,
     updateTextEntry: updateTextEntry,

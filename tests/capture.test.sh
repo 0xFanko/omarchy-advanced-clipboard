@@ -43,6 +43,14 @@ excluded_by_class=$(MOCK_SOURCE_CLASS=org.keepassxc.KeePassXC capture_text)
 still_included=$(MOCK_SOURCE_CLASS=firefox capture_text)
 jq -e '.sourceApp == "Firefox"' <<<"$still_included" >/dev/null
 
+jq -n '{excludedApplications: [42]}' >"$TEST_DIR/plugin/clipboard.json"
+numeric_value_is_ignored=$(MOCK_SOURCE_CLASS=42 capture_text)
+jq -e '.sourceApp == "42"' <<<"$numeric_value_is_ignored" >/dev/null
+
+jq -n '{excludedApplications: ([range(100) | "app\(.)"] + ["firefox"])}' >"$TEST_DIR/plugin/clipboard.json"
+beyond_limit_is_included=$(MOCK_SOURCE_CLASS=firefox capture_text)
+jq -e '.sourceApp == "Firefox"' <<<"$beyond_limit_is_included" >/dev/null
+
 cp "$ROOT/tests/fixtures/malformed-config.json" "$TEST_DIR/plugin/clipboard.json"
 malformed_falls_back=$(MOCK_SOURCE_CLASS=firefox capture_text)
 jq -e '.sourceApp == "Firefox"' <<<"$malformed_falls_back" >/dev/null

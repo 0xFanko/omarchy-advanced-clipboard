@@ -17,7 +17,6 @@ assert.equal(defaults.shortcuts.editEntry, "Ctrl+E")
 assert.equal(defaults.shortcuts.saveEdit, "Ctrl+S")
 assert.equal(defaults.shortcuts.deleteEntry, "Delete")
 assert.equal(defaults.shortcuts.clearHistory, "Shift+Delete")
-assert.deepEqual(defaults.excludedApplications, [])
 assert.equal(defaults.historyRetentionDays, 0)
 
 const custom = ClipboardConfig.parseConfig(JSON.stringify({
@@ -37,7 +36,6 @@ const custom = ClipboardConfig.parseConfig(JSON.stringify({
     deleteEntry: "Ctrl+X",
     clearHistory: "Ctrl+Shift+X"
   },
-  excludedApplications: ["Brave Browser", "org.keepassxc.KeePassXC", "brave browser", "", 42],
   historyRetentionDays: 30
 }))
 assert.equal(custom.shortcuts.deleteEntry, "Ctrl+X")
@@ -46,11 +44,7 @@ assert.equal(custom.shortcuts.close, "Ctrl+Q")
 assert.equal(custom.shortcuts.pasteEntry, "Ctrl+P")
 assert.equal(custom.shortcuts.editEntry, "Ctrl+I")
 assert.equal(custom.shortcuts.saveEdit, "Ctrl+Shift+S")
-assert.deepEqual(custom.excludedApplications, ["Brave Browser", "org.keepassxc.KeePassXC"])
 assert.equal(custom.historyRetentionDays, 30)
-assert.equal(ClipboardConfig.isApplicationExcluded(custom, "brave-browser", "brave browser"), true)
-assert.equal(ClipboardConfig.isApplicationExcluded(custom, "org.keepassxc.KeePassXC", "KeePassXC"), true)
-assert.equal(ClipboardConfig.isApplicationExcluded(custom, "firefox", "Firefox"), false)
 
 const conflicting = ClipboardConfig.parseConfig('{"shortcuts":{"deleteEntry":"Ctrl+X","clearHistory":"ctrl+x"}}')
 assert.equal(conflicting.valid, false)

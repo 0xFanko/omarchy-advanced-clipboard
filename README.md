@@ -88,7 +88,7 @@ Seules les entrées affichées avec le type `Text` peuvent être modifiées. `ed
 
 Évitez d’attribuer une lettre seule : elle ne pourra plus être saisie dans la recherche lorsque le clipboard est ouvert.
 
-Une application exclue est reconnue par son nom affiché ou par sa classe Hyprland, sans tenir compte de la casse. Pour lister les classes ouvertes :
+Une application exclue est reconnue par son nom affiché ou par sa classe Hyprland, sans tenir compte de la casse. Seules les chaînes non vides sont prises en compte. Les doublons sont ignorés et la liste est limitée aux 100 premières applications distinctes. Pour lister les classes ouvertes :
 
 ```bash
 hyprctl clients -j | jq -r '.[].class' | sort -u

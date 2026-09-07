@@ -49,6 +49,12 @@ assert.deepEqual(ClipboardHistory.updateTextEntry(editableHistory, 0, "   "), ed
 assert.deepEqual(ClipboardHistory.updateTextEntry([{ type: "image", path: "/tmp/image.png" }], 0, "text"), [{ type: "image", path: "/tmp/image.png" }])
 assert.deepEqual(ClipboardHistory.updateTextEntry(editableHistory, 4, "text"), editableHistory)
 
+const deduplicatedEdit = ClipboardHistory.updateTextEntry([
+  { type: "text", text: "before", sourceApp: "Foot" },
+  { type: "text", text: "after", sourceApp: "Firefox" }
+], 0, "after")
+assert.deepEqual(deduplicatedEdit, [{ type: "text", text: "after", sourceApp: "Foot" }])
+
 assert.equal(ClipboardHistory.captureDate("Friday 12:30"), "—")
 assert.equal(ClipboardHistory.captureTime("Friday 12:30"), "12:30")
 assert.equal(ClipboardHistory.imagePreviewText({ type: "image", mime: "image/png", capturedAt: "2026-09-04T14:37:52+02:00" }), "Screenshot from 04/09/2026 14:37")
@@ -87,6 +93,19 @@ assert.equal(ClipboardHistory.isManagedImagePath(
   "/state/clipboard-images/clipboard-123-456.png", "/state/clipboard-images"), false)
 assert.equal(ClipboardHistory.isManagedImagePath(
   "/other/" + managedImageHash + ".png", "/state/clipboard-images"), false)
+
+const retainedManagedImage = "/state/clipboard-images/" + managedImageHash + ".png"
+const expiredManagedImage = "/state/clipboard-images/" + "b".repeat(64) + ".jpg"
+const cleanupResult = ClipboardHistory.persistedImageCleanupResult([
+  retainedManagedImage,
+  expiredManagedImage,
+  expiredManagedImage,
+  "/tmp/external.png"
+], [{ type: "image", path: retainedManagedImage }], "/state/clipboard-images")
+assert.deepEqual(cleanupResult, {
+  deletablePaths: [expiredManagedImage],
+  referencedPaths: [retainedManagedImage]
+})
 
 const longEntry = {
   type: "text",

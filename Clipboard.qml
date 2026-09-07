@@ -23,6 +23,7 @@ Item {
   property string editDraftText: ""
   property string editError: ""
   property var history: []
+  property var pendingImageCleanupPaths: []
   property bool initialized: false
   property var settings: ClipboardConfig.defaultConfig()
 
@@ -172,17 +173,44 @@ Item {
     return ClipboardHistory.entryKey(entry)
   }
 
+  function escapeProcessPattern(value) {
+    var text = String(value || "")
+    var special = "\\^$.*+?()[]{}|"
+    var escaped = ""
+    for (var i = 0; i < text.length; i++) {
+      var character = text.charAt(i)
+      if (special.indexOf(character) >= 0) escaped += "\\"
+      escaped += character
+    }
+    return escaped
+  }
+
   function loadHistory(raw) {
     root.applyHistoryRetention(ClipboardHistory.parseHistory(raw), true)
     if (root.opened && !root.editMode) root.rebuildDisplay()
   }
 
-  function removeExpiredImageFiles(paths) {
-    var command = ["rm", "-f", "--"]
+  function queueExpiredImageFiles(paths) {
+    var queued = root.pendingImageCleanupPaths.slice()
     for (var i = 0; i < paths.length; i++) {
       var path = String(paths[i] || "")
-      if (ClipboardHistory.isManagedImagePath(path, root.imageDirectory)) command.push(path)
+      if (ClipboardHistory.isManagedImagePath(path, root.imageDirectory) && queued.indexOf(path) < 0)
+        queued.push(path)
     }
+    root.pendingImageCleanupPaths = queued
+  }
+
+  function removePersistedExpiredImageFiles() {
+    if (root.pendingImageCleanupPaths.length === 0) return
+
+    var cleanup = ClipboardHistory.persistedImageCleanupResult(
+      root.pendingImageCleanupPaths,
+      ClipboardHistory.parseHistory(historyFile.text()),
+      root.imageDirectory
+    )
+    root.pendingImageCleanupPaths = cleanup.referencedPaths
+    var command = ["rm", "-f", "--"]
+    for (var i = 0; i < cleanup.deletablePaths.length; i++) command.push(cleanup.deletablePaths[i])
     if (command.length > 3) Quickshell.execDetached(command)
   }
 
@@ -190,7 +218,7 @@ Item {
     var result = ClipboardHistory.historyRetentionResult(values, root.settings.historyRetentionDays)
     var changed = result.entries.length !== values.length
     root.history = result.entries
-    root.removeExpiredImageFiles(result.expiredImagePaths)
+    root.queueExpiredImageFiles(result.expiredImagePaths)
     if (changed && persistChanges)
       historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
     return changed
@@ -409,6 +437,8 @@ Item {
     printErrors: false
     onLoaded: root.loadHistory(text())
     onLoadFailed: root.loadHistory("[]")
+    onSaved: root.removePersistedExpiredImageFiles()
+    onSaveFailed: function(error) { console.warn("Clipboard: failed to save history: " + error) }
     onFileChanged: reload()
   }
 
@@ -427,7 +457,13 @@ Item {
   // the shell exits, however it exits, so no further lifecycle management.
   Process {
     id: initProc
-    command: ["pkill", "-f", "wl-paste .*--watch .*/plugins/[^/]+/capture\\.sh"]
+    command: [
+      "pkill",
+      "-f",
+      "^wl-paste --type (text|image/png) --watch "
+        + root.escapeProcessPattern(root.captureScript)
+        + " (text|image/png)$"
+    ]
     onExited: {
       currentProc.running = true
       textWatchProc.running = true

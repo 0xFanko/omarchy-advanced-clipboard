@@ -1,4 +1,3 @@
-var maxExcludedApplications = 100
 var maxShortcutLength = 64
 var maxHistoryRetentionDays = 36500
 
@@ -24,7 +23,6 @@ function defaultShortcuts() {
 function defaultConfig() {
   return {
     shortcuts: defaultShortcuts(),
-    excludedApplications: [],
     historyRetentionDays: 0,
     valid: true
   }
@@ -54,22 +52,6 @@ function normalizedShortcut(value, fallback) {
   return shortcut
 }
 
-function normalizedApplications(value) {
-  if (!Array.isArray(value)) return []
-
-  var applications = []
-  var seen = {}
-  for (var i = 0; i < value.length && applications.length < maxExcludedApplications; i++) {
-    if (typeof value[i] !== "string") continue
-    var application = value[i].trim()
-    var key = application.toLowerCase()
-    if (!application || seen[key]) continue
-    seen[key] = true
-    applications.push(application)
-  }
-  return applications
-}
-
 function parseConfig(raw) {
   var parsed
   try {
@@ -96,29 +78,15 @@ function parseConfig(raw) {
     config.shortcuts = defaults
     config.valid = false
   }
-  config.excludedApplications = normalizedApplications(parsed.excludedApplications)
   var retention = normalizedHistoryRetentionDays(parsed.historyRetentionDays)
   config.historyRetentionDays = retention.value
   if (!retention.valid) config.valid = false
   return config
 }
 
-function isApplicationExcluded(config, sourceId, sourceApp) {
-  var values = config && Array.isArray(config.excludedApplications) ? config.excludedApplications : []
-  var id = String(sourceId || "").trim().toLowerCase()
-  var app = String(sourceApp || "").trim().toLowerCase()
-
-  for (var i = 0; i < values.length; i++) {
-    var candidate = String(values[i] || "").trim().toLowerCase()
-    if (candidate && (candidate === id || candidate === app)) return true
-  }
-  return false
-}
-
 if (typeof module !== "undefined") {
   module.exports = {
     defaultConfig: defaultConfig,
-    parseConfig: parseConfig,
-    isApplicationExcluded: isApplicationExcluded
+    parseConfig: parseConfig
   }
 }

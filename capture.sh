@@ -57,10 +57,16 @@ source_is_excluded() {
     --arg source_app "${SOURCE_APP,,}" \
     '(.excludedApplications // [])
       | arrays
-      | any(.[ ];
-          (tostring | gsub("^[[:space:]]+|[[:space:]]+$"; "") | ascii_downcase) as $candidate
-          | ($candidate | length) > 0 and ($candidate == $source_id or $candidate == $source_app)
-        )' "$CONFIG_FILE" >/dev/null 2>&1
+      | reduce .[] as $value ({values: [], seen: {}};
+          if ($value | type) != "string" then .
+          else ($value | gsub("^[[:space:]]+|[[:space:]]+$"; "") | ascii_downcase) as $candidate
+          | if ($candidate | length) == 0 or .seen[$candidate] or (.values | length) >= 100 then .
+            else .seen[$candidate] = true | .values += [$candidate]
+            end
+          end
+        )
+      | .values
+      | any(.[]; . == $source_id or . == $source_app)' "$CONFIG_FILE" >/dev/null 2>&1
 }
 
 enrich_entry() {

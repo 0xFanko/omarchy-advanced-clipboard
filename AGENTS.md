@@ -9,7 +9,7 @@ Feature work targets `dev`; PR branches must also target `dev`, never `main`.
 
 - `Clipboard.qml` owns plugin lifecycle, keyboard interaction, processes, persistence wiring, and the main overlay.
 - `ClipboardInformation.qml` renders the selected entry, its editor, previews, and metadata.
-- `ClipboardConfig.js` is the single normalization/validation boundary for `clipboard.json`.
+- `ClipboardConfig.js` normalizes the QML-owned shortcut and retention settings from `clipboard.json`; `capture.sh` owns validation of `excludedApplications`, which must happen before a capture reaches QML.
 - `ClipboardHistory.js` is the pure data layer for entry normalization, classification, search, retention, and display rows.
 - `capture.sh` converts Wayland clipboard MIME data and Hyprland window metadata into JSON entries.
 - `clipboard.example.json` documents every supported user setting; the real `clipboard.json` is ignored by Git.
