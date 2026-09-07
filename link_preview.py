@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import ipaddress
 import json
 import os
@@ -23,6 +24,10 @@ MAX_BODY_BYTES = 512 * 1024
 MAX_REDIRECTS = 3
 REQUEST_TIMEOUT_SECONDS = 8.0
 MAX_URL_LENGTH = 8192
+SCREENSHOT_WIDTH = 1280
+SCREENSHOT_HEIGHT = 720
+SCREENSHOT_TIMEOUT_SECONDS = 12.0
+HELPER_TIMEOUT_SECONDS = REQUEST_TIMEOUT_SECONDS + SCREENSHOT_TIMEOUT_SECONDS + 1.0
 
 
 class PreviewError(Exception):
@@ -311,7 +316,11 @@ class PreviewClient:
             content_type = response.headers.get("content-type", "").lower()
             if content_type and "text/html" not in content_type and "application/xhtml+xml" not in content_type:
                 raise PreviewError("The address does not return an HTML page.")
-            return parse_metadata(response.body, content_type, target.url)
+            metadata = parse_metadata(response.body, content_type, target.url)
+            metadata["resolved_url"] = target.url
+            metadata["resolved_host"] = target.host
+            metadata["resolved_address"] = target.address
+            return metadata
 
         raise PreviewError("The page redirected too many times.")
 
@@ -341,6 +350,76 @@ def result(serial: int, state: str, **values: str) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+def screenshot_cache_path(url: str) -> str:
+    cache_root = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    cache_dir = os.path.join(cache_root, "omarchy", "clipboard-link-previews")
+    os.makedirs(cache_dir, mode=0o700, exist_ok=True)
+    return os.path.join(cache_dir, hashlib.sha256(url.encode("utf-8")).hexdigest() + ".png")
+
+
+def capture_screenshot(url: str, host: str, address: str) -> str:
+    """Render one inert viewport while keeping Chromium on the validated host.
+
+    The catch-all resolver rule denies third-party hosts. Besides limiting remote
+    content, this prevents a page from using the preview browser to probe local
+    services. The selected host remains pinned to the address validated above.
+    """
+    output_path = screenshot_cache_path(url)
+    if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+        return output_path
+
+    chromium = next((path for path in ("/usr/bin/chromium", "/usr/bin/chromium-browser") if os.path.isfile(path)), "")
+    if not chromium:
+        raise PreviewError("Chromium is required for the visual page preview.")
+
+    # Chromium infers the encoder from the final suffix, so the staging file
+    # must keep a .png extension.
+    temporary_output = output_path + f".{os.getpid()}.tmp.png"
+    resolver_rules = f"MAP {host} {address}, MAP * ~NOTFOUND"
+    with tempfile.TemporaryDirectory(prefix="omarchy-link-preview-") as profile_dir:
+        command = [
+            chromium,
+            "--headless=new",
+            "--disable-background-networking",
+            "--disable-breakpad",
+            "--disable-component-update",
+            "--disable-default-apps",
+            "--disable-extensions",
+            "--disable-features=OptimizationHints,MediaRouter",
+            "--disable-sync",
+            "--hide-scrollbars",
+            "--metrics-recording-only",
+            "--mute-audio",
+            "--no-first-run",
+            "--no-proxy-server",
+            f"--host-resolver-rules={resolver_rules}",
+            f"--user-data-dir={profile_dir}",
+            f"--window-size={SCREENSHOT_WIDTH},{SCREENSHOT_HEIGHT}",
+            f"--screenshot={temporary_output}",
+            url,
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=SCREENSHOT_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise PreviewError("The visual page preview timed out.") from error
+
+    if completed.returncode != 0 or not os.path.isfile(temporary_output) or os.path.getsize(temporary_output) == 0:
+        try:
+            os.unlink(temporary_output)
+        except FileNotFoundError:
+            pass
+        raise PreviewError("The visual page preview could not be rendered.")
+    os.replace(temporary_output, output_path)
+    return output_path
+
+
 def main(argv: list[str]) -> int:
     serial = int(argv[2]) if len(argv) > 2 and argv[2].isdigit() else 0
     if len(argv) < 2:
@@ -351,11 +430,16 @@ def main(argv: list[str]) -> int:
         raise PreviewError("The preview request timed out.")
 
     previous_handler = signal.signal(signal.SIGALRM, deadline_expired)
-    signal.setitimer(signal.ITIMER_REAL, REQUEST_TIMEOUT_SECONDS)
+    signal.setitimer(signal.ITIMER_REAL, HELPER_TIMEOUT_SECONDS)
     try:
         metadata = PreviewClient().fetch(argv[1])
-        state = "ready" if metadata["title"] or metadata["description"] else "empty"
-        print(result(serial, state, **metadata))
+        screenshot = capture_screenshot(
+            metadata.pop("resolved_url"),
+            metadata.pop("resolved_host"),
+            metadata.pop("resolved_address"),
+        )
+        state = "ready" if screenshot or metadata["title"] or metadata["description"] else "empty"
+        print(result(serial, state, screenshot=screenshot, **metadata))
     except PreviewError as error:
         print(result(serial, "error", error=str(error)))
     except Exception:

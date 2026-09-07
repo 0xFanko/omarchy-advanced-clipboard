@@ -23,6 +23,7 @@ Item {
   property string linkPreviewState: "idle"
   property string linkPreviewTitle: ""
   property string linkPreviewDescription: ""
+  property string linkPreviewImage: ""
   property string linkPreviewError: ""
   property int linkPreviewSerial: 0
 
@@ -47,6 +48,7 @@ Item {
     root.linkPreviewState = "idle"
     root.linkPreviewTitle = ""
     root.linkPreviewDescription = ""
+    root.linkPreviewImage = ""
     root.linkPreviewError = ""
   }
 
@@ -70,6 +72,7 @@ Item {
     linkPreviewTimeout.stop()
     root.linkPreviewTitle = String(payload.title || "")
     root.linkPreviewDescription = String(payload.description || "")
+    root.linkPreviewImage = payload.screenshot ? Util.fileUrl(String(payload.screenshot)) : ""
     root.linkPreviewError = String(payload.error || "")
     root.linkPreviewState = payload.state === "ready" || payload.state === "empty" || payload.state === "error"
       ? payload.state : "error"
@@ -86,7 +89,7 @@ Item {
 
   Timer {
     id: linkPreviewTimeout
-    interval: 10000
+    interval: 22000
     repeat: false
     onTriggered: {
       root.linkPreviewSerial++
@@ -171,6 +174,25 @@ Item {
           anchors.top: parent.top
           anchors.margins: Style.space(12)
           spacing: Style.space(6)
+
+          Rectangle {
+            visible: root.linkPreviewState === "ready" && root.linkPreviewImage.length > 0
+            width: parent.width
+            height: visible ? Math.round(width * 9 / 16) : 0
+            radius: Math.max(0, root.cornerRadius - Style.space(2))
+            color: Util.alpha(root.foreground, 0.06)
+            clip: true
+
+            Image {
+              anchors.fill: parent
+              source: root.linkPreviewImage
+              fillMode: Image.PreserveAspectCrop
+              verticalAlignment: Image.AlignTop
+              asynchronous: true
+              cache: false
+              smooth: true
+            }
+          }
 
           Text {
             visible: root.linkPreviewState === "loading"

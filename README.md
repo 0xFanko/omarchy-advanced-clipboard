@@ -8,7 +8,7 @@ It makes it easy to find and reuse previously copied text, links, files, and ima
 
 - search through clipboard history;
 - preview text, files, and images;
-- detect copied links and load a lightweight page preview when metadata is available;
+- detect copied links and show a static preview of the page's first viewport;
 - display the source application;
 - show detailed information such as type, date, time, URL, and title;
 - edit text entries directly from the clipboard history;
@@ -98,11 +98,11 @@ Les nouvelles copies provenant d’une application exclue ne sont pas enregistr�
 
 ### Aperçu des liens
 
-Pour une entrée HTTP(S), le panneau d’information tente de récupérer le titre et la description de la page. La récupération s’exécute hors du processus d’interface dans `link_preview.py`. Chaque résolution DNS et chaque redirection doit rester sur une adresse publique; les réseaux privés, loopback, link-local, multicast et les services de métadonnées sont bloqués. L’adresse validée est épinglée pour la connexion afin de limiter le DNS rebinding. La requête expire après huit secondes, accepte au plus trois redirections et accumule au maximum 512 Kio.
+Pour une entrée HTTP(S), le panneau d’information affiche une capture statique du premier écran de la page, suivie de son titre et de sa description. La récupération et la capture Chromium s’exécutent hors du processus d’interface dans `link_preview.py`. Chaque résolution DNS et chaque redirection doit rester sur une adresse publique; les réseaux privés, loopback, link-local, multicast et les services de métadonnées sont bloqués. L’adresse validée est épinglée pour la connexion afin de limiter le DNS rebinding. La requête HTTP expire après huit secondes, accepte au plus trois redirections et accumule au maximum 512 Kio; le rendu dispose ensuite de douze secondes au maximum. Chromium n’autorise que l’hôte validé pendant le rendu; les ressources tierces sont bloquées.
 
-Le contenu distant est toujours affiché comme texte brut et n’est jamais exécuté. Les images Open Graph ne sont volontairement pas téléchargées. Une erreur réseau ou une page sans métadonnées n’empêche pas les actions copier, coller, ouvrir et modifier.
+La capture résultante est affichée comme une simple image non interactive : elle ne reçoit ni clic, ni clavier, ni défilement. Une erreur réseau ou une page sans métadonnées n’empêche pas les actions copier, coller, ouvrir et modifier.
 
-L’aperçu nécessite `python3` et `curl`, installés par défaut sur Omarchy. Il n’utilise aucun service externe ou payant et ignore les variables de proxy pour conserver l’épinglage réseau.
+L’aperçu nécessite `python3`, `curl` et `chromium`, installés par défaut sur Omarchy. Il n’utilise aucun service externe ou payant et ignore les variables de proxy pour conserver l’épinglage réseau.
 
 ## Projet
 

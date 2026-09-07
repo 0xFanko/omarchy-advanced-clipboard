@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import os
 import pathlib
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -84,6 +86,23 @@ class PreviewTests(unittest.TestCase):
             "https://example.test/",
         )
         self.assertEqual(metadata, {"title": "Safe & plain", "description": "A useful description"})
+
+    def test_screenshot_cache_uses_a_stable_png_name(self):
+        with tempfile.TemporaryDirectory() as cache_dir:
+            previous = os.environ.get("XDG_CACHE_HOME")
+            os.environ["XDG_CACHE_HOME"] = cache_dir
+            try:
+                first = link_preview.screenshot_cache_path("https://example.test/page")
+                second = link_preview.screenshot_cache_path("https://example.test/page")
+            finally:
+                if previous is None:
+                    os.environ.pop("XDG_CACHE_HOME", None)
+                else:
+                    os.environ["XDG_CACHE_HOME"] = previous
+
+        self.assertEqual(first, second)
+        self.assertTrue(first.endswith(".png"))
+        self.assertNotIn("example.test", pathlib.Path(first).name)
 
 
 class LocalServerTests(unittest.TestCase):
