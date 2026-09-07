@@ -8,7 +8,7 @@ It makes it easy to find and reuse previously copied text, links, files, and ima
 
 - search through clipboard history;
 - preview text, files, and images;
-- detect copied links;
+- detect copied links and show a native Open Graph preview card;
 - display the source application;
 - show detailed information such as type, date, time, URL, and title;
 - edit text entries directly from the clipboard history;
@@ -95,6 +95,14 @@ hyprctl clients -j | jq -r '.[].class' | sort -u
 ```
 
 Les nouvelles copies provenant d’une application exclue ne sont pas enregistrées. Les anciennes entrées restent présentes dans l’historique.
+
+### Aperçu des liens
+
+Pour une entrée HTTP(S), le panneau d’information construit une carte native à partir des métadonnées Open Graph ou Twitter Card de la page : image, titre, description et nom du site. La récupération s’exécute hors du processus d’interface dans `link_preview.py`. Chaque résolution DNS et chaque redirection, y compris celles de l’image, doit rester sur une adresse publique; les réseaux privés, loopback, link-local, multicast et les services de métadonnées sont bloqués. L’adresse validée est épinglée pour chaque connexion afin de limiter le DNS rebinding. Le document HTML est limité à 512 Kio et l’image à 5 Mio. Seuls JPEG, PNG, GIF et WebP sont acceptés après vérification du type MIME et de la signature du fichier.
+
+La carte est non interactive. Sa récupération attend 400 ms après la sélection afin d’éviter les requêtes pendant un défilement rapide. Le titre et la description sont affichés dès leur réception, sans attendre l’image optionnelle. Avant affichage, l’image distante est décodée dans un sandbox Bubblewrap sans réseau ni accès au dossier personnel, avec des limites de temps, mémoire et dimensions, puis réencodée en miniature WebP. Les images assainies sont mises en cache pendant 24 heures, dans la limite de 100 fichiers et 100 Mio; les plus anciennes sont supprimées automatiquement. Un verrou par URL évite les téléchargements et normalisations simultanés d’un même média. Si l’image est absente, invalide ou bloquée, le titre et la description restent affichés. Une erreur réseau ou une page sans métadonnées n’empêche pas les actions copier, coller, ouvrir et modifier.
+
+L’aperçu nécessite `python3`, `curl`, `bubblewrap` et ImageMagick. Il n’exécute aucun contenu web, n’utilise aucun navigateur ni service externe ou payant, et ignore les variables de proxy pour conserver l’épinglage réseau.
 
 ## Projet
 

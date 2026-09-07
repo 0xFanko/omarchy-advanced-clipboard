@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import QtQuick
 import qs.Commons
 
@@ -16,8 +17,9 @@ Item {
   property string editError: ""
   property string saveShortcut: "Ctrl+S"
   property string cancelShortcut: "Escape"
+  property string linkPreviewHelper: ""
+  property bool previewEnabled: true
   property alias editedText: editField.text
-
   function focusEditor() {
     if (root.editing) editField.forceActiveFocus()
   }
@@ -30,12 +32,15 @@ Item {
     return Quickshell.iconPath(value, true)
   }
 
-  onEntryChanged: informationFlick.contentY = 0
-  onEditingChanged: {
-    if (!root.editing) return
-    editField.text = root.draftText
+  onEntryChanged: {
     informationFlick.contentY = 0
-    Qt.callLater(function() { root.focusEditor() })
+  }
+  onEditingChanged: {
+    if (root.editing) {
+      editField.text = root.draftText
+      informationFlick.contentY = 0
+      Qt.callLater(function() { root.focusEditor() })
+    }
   }
 
   Flickable {
@@ -73,6 +78,16 @@ Item {
         verticalAlignment: Image.AlignTop
         asynchronous: true
         smooth: true
+      }
+
+      LinkPreviewCard {
+        entry: root.entry
+        helper: root.linkPreviewHelper
+        foreground: root.foreground
+        borderColor: root.borderColor
+        fontFamily: root.fontFamily
+        cornerRadius: root.cornerRadius
+        previewEnabled: root.previewEnabled && !root.editing
       }
 
       Text {
