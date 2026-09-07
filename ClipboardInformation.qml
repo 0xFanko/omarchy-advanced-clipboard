@@ -24,8 +24,10 @@ Item {
   property string linkPreviewTitle: ""
   property string linkPreviewDescription: ""
   property string linkPreviewImage: ""
+  property string linkPreviewSite: ""
   property string linkPreviewError: ""
   property int linkPreviewSerial: 0
+  readonly property int linkPreviewDebounceMs: 400
 
   readonly property bool hasLink: root.entry && root.entry.typeLabel === "Link" && /^https?:\/\//i.test(String(root.entry.url || ""))
 
@@ -43,17 +45,25 @@ Item {
 
   function resetLinkPreview() {
     root.linkPreviewSerial++
+    linkPreviewDebounce.stop()
     linkPreviewProcess.running = false
     linkPreviewTimeout.stop()
     root.linkPreviewState = "idle"
     root.linkPreviewTitle = ""
     root.linkPreviewDescription = ""
     root.linkPreviewImage = ""
+    root.linkPreviewSite = ""
     root.linkPreviewError = ""
   }
 
   function loadLinkPreview() {
     root.resetLinkPreview()
+    if (!root.previewEnabled || !root.hasLink || root.editing || !root.linkPreviewHelper) return
+
+    linkPreviewDebounce.restart()
+  }
+
+  function startLinkPreview() {
     if (!root.previewEnabled || !root.hasLink || root.editing || !root.linkPreviewHelper) return
 
     var serial = root.linkPreviewSerial
@@ -72,7 +82,8 @@ Item {
     linkPreviewTimeout.stop()
     root.linkPreviewTitle = String(payload.title || "")
     root.linkPreviewDescription = String(payload.description || "")
-    root.linkPreviewImage = payload.screenshot ? Util.fileUrl(String(payload.screenshot)) : ""
+    root.linkPreviewImage = payload.image ? Util.fileUrl(String(payload.image)) : ""
+    root.linkPreviewSite = String(payload.site || "")
     root.linkPreviewError = String(payload.error || "")
     root.linkPreviewState = payload.state === "ready" || payload.state === "empty" || payload.state === "error"
       ? payload.state : "error"
@@ -88,8 +99,15 @@ Item {
   }
 
   Timer {
+    id: linkPreviewDebounce
+    interval: root.linkPreviewDebounceMs
+    repeat: false
+    onTriggered: root.startLinkPreview()
+  }
+
+  Timer {
     id: linkPreviewTimeout
-    interval: 22000
+    interval: 15000
     repeat: false
     onTriggered: {
       root.linkPreviewSerial++
@@ -186,6 +204,8 @@ Item {
             Image {
               anchors.fill: parent
               source: root.linkPreviewImage
+              sourceSize.width: width * Screen.devicePixelRatio
+              sourceSize.height: height * Screen.devicePixelRatio
               fillMode: Image.PreserveAspectCrop
               verticalAlignment: Image.AlignTop
               asynchronous: true
@@ -231,6 +251,18 @@ Item {
             font.pixelSize: Style.font.caption
             wrapMode: Text.Wrap
             maximumLineCount: 4
+            elide: Text.ElideRight
+          }
+
+          Text {
+            visible: root.linkPreviewState === "ready" && root.linkPreviewSite.length > 0
+            width: parent.width
+            text: root.linkPreviewSite
+            textFormat: Text.PlainText
+            color: root.foreground
+            opacity: 0.58
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
             elide: Text.ElideRight
           }
 

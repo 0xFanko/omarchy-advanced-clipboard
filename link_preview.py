@@ -24,10 +24,17 @@ MAX_BODY_BYTES = 512 * 1024
 MAX_REDIRECTS = 3
 REQUEST_TIMEOUT_SECONDS = 8.0
 MAX_URL_LENGTH = 8192
-SCREENSHOT_WIDTH = 1280
-SCREENSHOT_HEIGHT = 720
-SCREENSHOT_TIMEOUT_SECONDS = 12.0
-HELPER_TIMEOUT_SECONDS = REQUEST_TIMEOUT_SECONDS + SCREENSHOT_TIMEOUT_SECONDS + 1.0
+MEDIA_MAX_BYTES = 5 * 1024 * 1024
+MEDIA_TIMEOUT_SECONDS = 5.0
+HELPER_TIMEOUT_SECONDS = 14.0
+CACHE_MAX_FILES = 100
+CACHE_MAX_BYTES = 100 * 1024 * 1024
+IMAGE_TYPES = {
+    "image/jpeg": (".jpg", b"\xff\xd8\xff"),
+    "image/png": (".png", b"\x89PNG\r\n\x1a\n"),
+    "image/gif": (".gif", (b"GIF87a", b"GIF89a")),
+    "image/webp": (".webp", b"RIFF"),
+}
 
 
 class PreviewError(Exception):
@@ -108,9 +115,28 @@ def parse_metadata(body: bytes, content_type: str, page_url: str) -> dict[str, s
         # HTMLParser is intentionally best effort for malformed remote markup.
         pass
 
-    title = clean_text(parser.properties.get("og:title", "") or " ".join(parser.title_parts))[:300]
-    description = clean_text(parser.properties.get("og:description", "") or parser.names.get("description", ""))[:1000]
-    return {"title": title, "description": description}
+    title = clean_text(
+        parser.properties.get("og:title", "")
+        or parser.names.get("twitter:title", "")
+        or " ".join(parser.title_parts)
+    )[:300]
+    description = clean_text(
+        parser.properties.get("og:description", "")
+        or parser.names.get("twitter:description", "")
+        or parser.names.get("description", "")
+    )[:1000]
+    image = clean_text(
+        parser.properties.get("og:image:secure_url", "")
+        or parser.properties.get("og:image", "")
+        or parser.names.get("twitter:image", "")
+        or parser.names.get("twitter:image:src", "")
+    )
+    base_url = urljoin(page_url, parser.base_href) if parser.base_href else page_url
+    image_url = urljoin(base_url, image) if image else ""
+    if image_url and urlsplit(image_url).scheme.lower() not in ("http", "https"):
+        image_url = ""
+    site = clean_text(parser.properties.get("og:site_name", "") or (urlsplit(page_url).hostname or ""))[:200]
+    return {"title": title, "description": description, "image_url": image_url, "site": site}
 
 
 class NetworkPolicy:
@@ -205,7 +231,7 @@ class PreviewClient:
         normalized = urlunsplit((parsed.scheme.lower(), netloc, parsed.path or "/", parsed.query, ""))
         return ValidatedUrl(normalized, host, port, selected)
 
-    def request_once(self, target: ValidatedUrl, timeout: float) -> Response:
+    def request_once(self, target: ValidatedUrl, timeout: float, accept: str, max_body_bytes: int) -> Response:
         command = [
             "curl",
             "--disable",
@@ -222,7 +248,7 @@ class PreviewClient:
             "--max-time",
             str(max(0.1, timeout)),
             "--header",
-            "Accept: text/html, application/xhtml+xml",
+            f"Accept: {accept}",
             "--output",
             "-",
         ]
@@ -261,10 +287,10 @@ class PreviewClient:
             while True:
                 # Read at most one byte beyond the remaining allowance so an
                 # oversized response is detected before it is accumulated.
-                chunk = process.stdout.read(min(64 * 1024, self.max_body_bytes - len(body) + 1))
+                chunk = process.stdout.read(min(64 * 1024, max_body_bytes - len(body) + 1))
                 if not chunk:
                     break
-                remaining = self.max_body_bytes - len(body)
+                remaining = max_body_bytes - len(body)
                 if len(chunk) > remaining:
                     if remaining > 0:
                         body.extend(chunk[:remaining])
@@ -288,7 +314,7 @@ class PreviewClient:
             status, headers = parse_headers(header_file.read())
             return Response(status, headers, bytes(body))
 
-    def fetch(self, initial_url: str) -> dict[str, str]:
+    def fetch_response(self, initial_url: str, accept: str, max_body_bytes: int) -> tuple[Response, ValidatedUrl]:
         deadline = time.monotonic() + self.timeout
         current_url = initial_url
 
@@ -298,7 +324,7 @@ class PreviewClient:
                 raise PreviewError("The preview request timed out.")
 
             target = self.validate_url(current_url)
-            response = self.request_once(target, remaining)
+            response = self.request_once(target, remaining, accept, max_body_bytes)
             if response.status in (301, 302, 303, 307, 308):
                 location = response.headers.get("location", "").strip()
                 if not location:
@@ -313,16 +339,31 @@ class PreviewClient:
             if response.status < 200 or response.status >= 300:
                 raise PreviewError(f"The page returned HTTP {response.status}.")
 
-            content_type = response.headers.get("content-type", "").lower()
-            if content_type and "text/html" not in content_type and "application/xhtml+xml" not in content_type:
-                raise PreviewError("The address does not return an HTML page.")
-            metadata = parse_metadata(response.body, content_type, target.url)
-            metadata["resolved_url"] = target.url
-            metadata["resolved_host"] = target.host
-            metadata["resolved_address"] = target.address
-            return metadata
+            return response, target
 
         raise PreviewError("The page redirected too many times.")
+
+    def fetch(self, initial_url: str) -> dict[str, str]:
+        response, target = self.fetch_response(
+            initial_url, "text/html, application/xhtml+xml", self.max_body_bytes
+        )
+        content_type = response.headers.get("content-type", "").lower()
+        if content_type and "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+            raise PreviewError("The address does not return an HTML page.")
+        return parse_metadata(response.body, content_type, target.url)
+
+    def fetch_image(self, initial_url: str) -> tuple[bytes, str, str]:
+        response, target = self.fetch_response(initial_url, ", ".join(IMAGE_TYPES), MEDIA_MAX_BYTES)
+        content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type not in IMAGE_TYPES:
+            raise PreviewError("The preview image type is not supported.")
+        extension, signature = IMAGE_TYPES[content_type]
+        signatures = signature if isinstance(signature, tuple) else (signature,)
+        if not any(response.body.startswith(value) for value in signatures):
+            raise PreviewError("The preview image content is invalid.")
+        if content_type == "image/webp" and response.body[8:12] != b"WEBP":
+            raise PreviewError("The preview image content is invalid.")
+        return response.body, extension, target.url
 
 
 def parse_headers(raw: bytes) -> tuple[int, dict[str, str]]:
@@ -350,73 +391,86 @@ def result(serial: int, state: str, **values: str) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def screenshot_cache_path(url: str) -> str:
+def media_cache_dir() -> str:
     cache_root = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    cache_dir = os.path.join(cache_root, "omarchy", "clipboard-link-previews")
+    cache_dir = os.path.join(cache_root, "omarchy", "clipboard-link-media")
     os.makedirs(cache_dir, mode=0o700, exist_ok=True)
-    return os.path.join(cache_dir, hashlib.sha256(url.encode("utf-8")).hexdigest() + ".png")
+    return cache_dir
 
 
-def capture_screenshot(url: str, host: str, address: str) -> str:
-    """Render one inert viewport while keeping Chromium on the validated host.
+def media_cache_path(url: str, extension: str) -> str:
+    return os.path.join(media_cache_dir(), hashlib.sha256(url.encode("utf-8")).hexdigest() + extension)
 
-    The catch-all resolver rule denies third-party hosts. Besides limiting remote
-    content, this prevents a page from using the preview browser to probe local
-    services. The selected host remains pinned to the address validated above.
-    """
-    output_path = screenshot_cache_path(url)
+
+def cached_media_path(url: str) -> str:
+    for extension, _ in IMAGE_TYPES.values():
+        path = media_cache_path(url, extension)
+        try:
+            if os.path.isfile(path) and os.path.getsize(path) > 0:
+                os.utime(path)
+                prune_media_cache(os.path.dirname(path), path)
+                return path
+        except OSError:
+            continue
+    return ""
+
+
+def prune_media_cache(cache_dir: str, preserve: str = "") -> None:
+    entries: list[tuple[float, int, str]] = []
+    try:
+        names = os.listdir(cache_dir)
+    except OSError:
+        return
+
+    for name in names:
+        path = os.path.join(cache_dir, name)
+        if not any(name.endswith(extension) for extension, _ in IMAGE_TYPES.values()) or path == preserve:
+            continue
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        if os.path.isfile(path):
+            entries.append((stat.st_mtime, stat.st_size, path))
+
+    preserved_size = 0
+    if preserve:
+        try:
+            preserved_size = os.path.getsize(preserve)
+        except OSError:
+            pass
+    total_files = len(entries) + (1 if preserved_size else 0)
+    total_bytes = sum(entry[1] for entry in entries) + preserved_size
+
+    for _, size, path in sorted(entries):
+        if total_files <= CACHE_MAX_FILES and total_bytes <= CACHE_MAX_BYTES:
+            break
+        try:
+            os.unlink(path)
+        except OSError:
+            continue
+        total_files -= 1
+        total_bytes -= size
+
+
+def cache_image(url: str, body: bytes, extension: str) -> str:
+    output_path = media_cache_path(url, extension)
     if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+        os.utime(output_path)
+        prune_media_cache(os.path.dirname(output_path), output_path)
         return output_path
 
-    chromium = next((path for path in ("/usr/bin/chromium", "/usr/bin/chromium-browser") if os.path.isfile(path)), "")
-    if not chromium:
-        raise PreviewError("Chromium is required for the visual page preview.")
-
-    # Chromium infers the encoder from the final suffix, so the staging file
-    # must keep a .png extension.
-    temporary_output = output_path + f".{os.getpid()}.tmp.png"
-    resolver_rules = f"MAP {host} {address}, MAP * ~NOTFOUND"
-    with tempfile.TemporaryDirectory(prefix="omarchy-link-preview-") as profile_dir:
-        command = [
-            chromium,
-            "--headless=new",
-            "--disable-background-networking",
-            "--disable-breakpad",
-            "--disable-component-update",
-            "--disable-default-apps",
-            "--disable-extensions",
-            "--disable-features=OptimizationHints,MediaRouter",
-            "--disable-sync",
-            "--hide-scrollbars",
-            "--metrics-recording-only",
-            "--mute-audio",
-            "--no-first-run",
-            "--no-proxy-server",
-            f"--host-resolver-rules={resolver_rules}",
-            f"--user-data-dir={profile_dir}",
-            f"--window-size={SCREENSHOT_WIDTH},{SCREENSHOT_HEIGHT}",
-            f"--screenshot={temporary_output}",
-            url,
-        ]
+    descriptor, temporary_path = tempfile.mkstemp(prefix=".preview-", dir=os.path.dirname(output_path))
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(body)
+        os.replace(temporary_path, output_path)
+    finally:
         try:
-            completed = subprocess.run(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=SCREENSHOT_TIMEOUT_SECONDS,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise PreviewError("The visual page preview timed out.") from error
-
-    if completed.returncode != 0 or not os.path.isfile(temporary_output) or os.path.getsize(temporary_output) == 0:
-        try:
-            os.unlink(temporary_output)
+            os.unlink(temporary_path)
         except FileNotFoundError:
             pass
-        raise PreviewError("The visual page preview could not be rendered.")
-    os.replace(temporary_output, output_path)
+    prune_media_cache(os.path.dirname(output_path), output_path)
     return output_path
 
 
@@ -433,13 +487,20 @@ def main(argv: list[str]) -> int:
     signal.setitimer(signal.ITIMER_REAL, HELPER_TIMEOUT_SECONDS)
     try:
         metadata = PreviewClient().fetch(argv[1])
-        screenshot = capture_screenshot(
-            metadata.pop("resolved_url"),
-            metadata.pop("resolved_host"),
-            metadata.pop("resolved_address"),
-        )
-        state = "ready" if screenshot or metadata["title"] or metadata["description"] else "empty"
-        print(result(serial, state, screenshot=screenshot, **metadata))
+        image_path = ""
+        image_url = metadata.pop("image_url", "")
+        if image_url:
+            image_path = cached_media_path(image_url)
+            if not image_path:
+                try:
+                    body, extension, _ = PreviewClient(timeout=MEDIA_TIMEOUT_SECONDS).fetch_image(image_url)
+                    image_path = cache_image(image_url, body, extension)
+                except PreviewError:
+                    # Metadata remains useful when a publisher's image is missing,
+                    # invalid, oversized, or hosted somewhere we deliberately block.
+                    pass
+        state = "ready" if image_path or metadata["title"] or metadata["description"] else "empty"
+        print(result(serial, state, image=image_path, **metadata))
     except PreviewError as error:
         print(result(serial, "error", error=str(error)))
     except Exception:

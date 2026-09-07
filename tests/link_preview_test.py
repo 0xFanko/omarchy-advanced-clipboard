@@ -69,7 +69,7 @@ class PreviewTests(unittest.TestCase):
         client = link_preview.PreviewClient(resolver=public_resolver)
         calls = []
 
-        def request_once(target, timeout):
+        def request_once(target, timeout, accept, max_body_bytes):
             calls.append(target.url)
             return link_preview.Response(302, {"location": "http://127.0.0.1/admin"}, b"")
 
@@ -85,15 +85,31 @@ class PreviewTests(unittest.TestCase):
             "text/html; charset=utf-8",
             "https://example.test/",
         )
-        self.assertEqual(metadata, {"title": "Safe & plain", "description": "A useful description"})
+        self.assertEqual(metadata, {
+            "title": "Safe & plain",
+            "description": "A useful description",
+            "image_url": "",
+            "site": "example.test",
+        })
 
-    def test_screenshot_cache_uses_a_stable_png_name(self):
+    def test_parses_open_graph_image_against_page_base(self):
+        metadata = link_preview.parse_metadata(
+            b'<base href="https://cdn.example.test/assets/">'
+            b'<meta property="og:image" content="card.png">'
+            b'<meta property="og:site_name" content="Example News">',
+            "text/html",
+            "https://example.test/article",
+        )
+        self.assertEqual(metadata["image_url"], "https://cdn.example.test/assets/card.png")
+        self.assertEqual(metadata["site"], "Example News")
+
+    def test_media_cache_uses_a_stable_opaque_name(self):
         with tempfile.TemporaryDirectory() as cache_dir:
             previous = os.environ.get("XDG_CACHE_HOME")
             os.environ["XDG_CACHE_HOME"] = cache_dir
             try:
-                first = link_preview.screenshot_cache_path("https://example.test/page")
-                second = link_preview.screenshot_cache_path("https://example.test/page")
+                first = link_preview.media_cache_path("https://example.test/card", ".png")
+                second = link_preview.media_cache_path("https://example.test/card", ".png")
             finally:
                 if previous is None:
                     os.environ.pop("XDG_CACHE_HOME", None)
@@ -103,6 +119,59 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertTrue(first.endswith(".png"))
         self.assertNotIn("example.test", pathlib.Path(first).name)
+
+    def test_cached_media_path_reuses_existing_image(self):
+        with tempfile.TemporaryDirectory() as cache_dir:
+            previous = os.environ.get("XDG_CACHE_HOME")
+            os.environ["XDG_CACHE_HOME"] = cache_dir
+            try:
+                expected = pathlib.Path(link_preview.media_cache_path("https://example.test/card", ".webp"))
+                expected.write_bytes(b"RIFF1234WEBP")
+                actual = link_preview.cached_media_path("https://example.test/card")
+            finally:
+                if previous is None:
+                    os.environ.pop("XDG_CACHE_HOME", None)
+                else:
+                    os.environ["XDG_CACHE_HOME"] = previous
+
+        self.assertEqual(actual, str(expected))
+
+    def test_media_cache_prunes_oldest_files_by_count(self):
+        with tempfile.TemporaryDirectory() as cache_dir:
+            paths = []
+            for index in range(link_preview.CACHE_MAX_FILES + 2):
+                path = pathlib.Path(cache_dir) / f"{index:03}.png"
+                path.write_bytes(b"x")
+                os.utime(path, (index + 1, index + 1))
+                paths.append(path)
+
+            preserved = str(paths[-1])
+            link_preview.prune_media_cache(cache_dir, preserved)
+
+            remaining = sorted(pathlib.Path(cache_dir).glob("*.png"))
+            self.assertEqual(len(remaining), link_preview.CACHE_MAX_FILES)
+            self.assertFalse(paths[0].exists())
+            self.assertFalse(paths[1].exists())
+            self.assertTrue(pathlib.Path(preserved).exists())
+
+    def test_media_cache_prunes_oldest_files_by_size(self):
+        with tempfile.TemporaryDirectory() as cache_dir:
+            first = pathlib.Path(cache_dir) / "first.png"
+            second = pathlib.Path(cache_dir) / "second.png"
+            first.write_bytes(b"a" * 60)
+            second.write_bytes(b"b" * 60)
+            os.utime(first, (1, 1))
+            os.utime(second, (2, 2))
+
+            previous_limit = link_preview.CACHE_MAX_BYTES
+            link_preview.CACHE_MAX_BYTES = 100
+            try:
+                link_preview.prune_media_cache(cache_dir)
+            finally:
+                link_preview.CACHE_MAX_BYTES = previous_limit
+
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists())
 
 
 class LocalServerTests(unittest.TestCase):
@@ -132,6 +201,20 @@ class LocalServerTests(unittest.TestCase):
                     body = b"<title>Pinned connection</title>"
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif self.path == "/image":
+                    body = b"\x89PNG\r\n\x1a\nminimal-test-payload"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif self.path == "/fake-image":
+                    body = b"<script>not an image</script>"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
                     self.wfile.write(body)
@@ -169,6 +252,29 @@ class LocalServerTests(unittest.TestCase):
         client = self.client(resolver=resolver)
         metadata = client.fetch(f"http://preview.test:{self.server.server_port}/meta")
         self.assertEqual(metadata["title"], "Pinned connection")
+
+    def test_accepts_supported_image_with_matching_signature(self):
+        body, extension, url = self.client().fetch_image(self.url + "/image")
+        self.assertTrue(body.startswith(b"\x89PNG"))
+        self.assertEqual(extension, ".png")
+        self.assertEqual(url, self.url + "/image")
+
+    def test_rejects_mime_type_spoofing(self):
+        with self.assertRaisesRegex(link_preview.PreviewError, "content is invalid"):
+            self.client().fetch_image(self.url + "/fake-image")
+
+    def test_blocks_private_image_redirect_before_following_it(self):
+        client = link_preview.PreviewClient(resolver=public_resolver)
+        calls = []
+
+        def request_once(target, timeout, accept, max_body_bytes):
+            calls.append(target.url)
+            return link_preview.Response(302, {"location": "http://127.0.0.1/private.png"}, b"")
+
+        client.request_once = request_once
+        with self.assertRaises(link_preview.PreviewError):
+            client.fetch_image("https://images.example.test/card.png")
+        self.assertEqual(calls, ["https://images.example.test/card.png"])
 
 
 if __name__ == "__main__":

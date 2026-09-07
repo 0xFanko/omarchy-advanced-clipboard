@@ -8,7 +8,7 @@ It makes it easy to find and reuse previously copied text, links, files, and ima
 
 - search through clipboard history;
 - preview text, files, and images;
-- detect copied links and show a static preview of the page's first viewport;
+- detect copied links and show a native Open Graph preview card;
 - display the source application;
 - show detailed information such as type, date, time, URL, and title;
 - edit text entries directly from the clipboard history;
@@ -98,11 +98,11 @@ Les nouvelles copies provenant d’une application exclue ne sont pas enregistr�
 
 ### Aperçu des liens
 
-Pour une entrée HTTP(S), le panneau d’information affiche une capture statique du premier écran de la page, suivie de son titre et de sa description. La récupération et la capture Chromium s’exécutent hors du processus d’interface dans `link_preview.py`. Chaque résolution DNS et chaque redirection doit rester sur une adresse publique; les réseaux privés, loopback, link-local, multicast et les services de métadonnées sont bloqués. L’adresse validée est épinglée pour la connexion afin de limiter le DNS rebinding. La requête HTTP expire après huit secondes, accepte au plus trois redirections et accumule au maximum 512 Kio; le rendu dispose ensuite de douze secondes au maximum. Chromium n’autorise que l’hôte validé pendant le rendu; les ressources tierces sont bloquées.
+Pour une entrée HTTP(S), le panneau d’information construit une carte native à partir des métadonnées Open Graph ou Twitter Card de la page : image, titre, description et nom du site. La récupération s’exécute hors du processus d’interface dans `link_preview.py`. Chaque résolution DNS et chaque redirection, y compris celles de l’image, doit rester sur une adresse publique; les réseaux privés, loopback, link-local, multicast et les services de métadonnées sont bloqués. L’adresse validée est épinglée pour chaque connexion afin de limiter le DNS rebinding. Le document HTML est limité à 512 Kio et l’image à 5 Mio. Seuls JPEG, PNG, GIF et WebP sont acceptés après vérification du type MIME et de la signature du fichier.
 
-La capture résultante est affichée comme une simple image non interactive : elle ne reçoit ni clic, ni clavier, ni défilement. Une erreur réseau ou une page sans métadonnées n’empêche pas les actions copier, coller, ouvrir et modifier.
+La carte est non interactive. Sa récupération attend 400 ms après la sélection afin d’éviter les requêtes pendant un défilement rapide. Les images sont mises en cache dans la limite de 100 fichiers et 100 Mio; les plus anciennes sont supprimées automatiquement. Si l’image est absente, invalide ou bloquée, le titre et la description restent affichés. Une erreur réseau ou une page sans métadonnées n’empêche pas les actions copier, coller, ouvrir et modifier.
 
-L’aperçu nécessite `python3`, `curl` et `chromium`, installés par défaut sur Omarchy. Il n’utilise aucun service externe ou payant et ignore les variables de proxy pour conserver l’épinglage réseau.
+L’aperçu nécessite uniquement `python3` et `curl`, installés par défaut sur Omarchy. Il n’exécute aucun contenu distant, n’utilise aucun navigateur ni service externe ou payant, et ignore les variables de proxy pour conserver l’épinglage réseau.
 
 ## Projet
 
