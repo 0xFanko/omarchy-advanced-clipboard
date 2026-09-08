@@ -19,7 +19,12 @@ CACHE_MAX_BYTES = 100 * 1024 * 1024
 CACHE_TTL_SECONDS = 24 * 60 * 60
 NORMALIZED_EXTENSION = ".png"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-SOURCE_IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
+SOURCE_IMAGE_TYPES = {
+    "image/jpeg": "jpeg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+}
 
 
 def cache_directory() -> Path:
@@ -79,20 +84,12 @@ def prune_cache(preserve: Path | None = None) -> None:
         total_bytes -= size
 
 
-def normalize_image(body: bytes) -> bytes:
-    bwrap = shutil.which("bwrap")
+def normalize_image(body: bytes, input_format: str) -> bytes:
     magick = shutil.which("magick")
-    if not bwrap or not magick:
-        raise PreviewError("Image sandbox tools are unavailable.")
+    if not magick:
+        raise PreviewError("The image decoder is unavailable.")
 
     command = [
-        bwrap,
-        "--die-with-parent", "--unshare-all", "--new-session",
-        "--ro-bind", "/usr", "/usr",
-        "--ro-bind", "/lib", "/lib",
-        "--ro-bind", "/lib64", "/lib64",
-        "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-        "--clearenv", "--setenv", "PATH", "/usr/bin:/bin",
         os.path.realpath(magick),
         "-limit", "memory", "64MiB",
         "-limit", "map", "64MiB",
@@ -102,7 +99,7 @@ def normalize_image(body: bytes) -> bytes:
         "-limit", "area", "64MP",
         "-limit", "thread", "1",
         "-limit", "time", "5",
-        "-", "-auto-orient", "-thumbnail", "1280x720>",
+        f"{input_format}:-", "-auto-orient", "-thumbnail", "1280x720>",
         "-strip", "-depth", "8", "png:-",
     ]
     try:
@@ -117,7 +114,7 @@ def normalize_image(body: bytes) -> bytes:
     except subprocess.TimeoutExpired as error:
         raise PreviewError("The preview image normalization timed out.") from error
     except OSError as error:
-        raise PreviewError("Image sandbox tools are unavailable.") from error
+        raise PreviewError("The image decoder is unavailable.") from error
 
     normalized = completed.stdout
     if completed.returncode != 0 or not normalized.startswith(PNG_SIGNATURE):
@@ -159,7 +156,7 @@ def fetch_preview_image(url: str, client: NetworkClient | None = None) -> str:
     content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if content_type not in SOURCE_IMAGE_TYPES:
         raise PreviewError("The preview image type is not supported.")
-    normalized = normalize_image(response.body)
+    normalized = normalize_image(response.body, SOURCE_IMAGE_TYPES[content_type])
     try:
         return store_image(url, normalized)
     except OSError as error:

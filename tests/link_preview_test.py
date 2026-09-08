@@ -57,12 +57,13 @@ class PreviewTests(unittest.TestCase):
             link_preview,
             "fetch_preview_image",
             side_effect=preview_network.PreviewError("blocked"),
-        ):
+        ), mock.patch("sys.stderr") as error_output:
             payload = link_preview.preview_payload("https://example.test/")
 
         self.assertEqual(payload["title"], "Safe title")
         self.assertEqual(payload["description"], "Safe description")
         self.assertEqual(payload["image"], "")
+        error_output.write.assert_any_call("Link preview image skipped: blocked")
 
     def test_accepts_public_ipv4_and_ipv6_dns_answers(self):
         def resolver(host, port, family, socktype):
@@ -239,17 +240,17 @@ class PreviewTests(unittest.TestCase):
             self.assertTrue(second.exists())
 
     def test_normalizes_a_valid_png(self):
-        normalized = preview_media.normalize_image(png_fixture())
+        normalized = preview_media.normalize_image(png_fixture(), "png")
         self.assertTrue(normalized.startswith(preview_media.PNG_SIGNATURE))
         self.assertLessEqual(len(normalized), preview_media.MEDIA_MAX_BYTES)
 
     def test_rejects_a_signature_only_png(self):
         with self.assertRaisesRegex(preview_network.PreviewError, "normalized safely"):
-            preview_media.normalize_image(preview_media.PNG_SIGNATURE + b"not-an-image")
+            preview_media.normalize_image(preview_media.PNG_SIGNATURE + b"not-an-image", "png")
 
     def test_rejects_excessive_image_dimensions(self):
         with self.assertRaisesRegex(preview_network.PreviewError, "normalized safely"):
-            preview_media.normalize_image(png_fixture(width=8193))
+            preview_media.normalize_image(png_fixture(width=8193), "png")
 
     def test_translates_cache_errors_to_preview_errors(self):
         with mock.patch.object(preview_media, "cache_directory", side_effect=PermissionError("denied")):

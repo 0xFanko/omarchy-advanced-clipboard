@@ -33,8 +33,8 @@ def preview_payload(url: str) -> dict[str, str]:
     if metadata.image_url:
         try:
             image = fetch_preview_image(metadata.image_url)
-        except PreviewError:
-            pass
+        except PreviewError as error:
+            print(f"Link preview image skipped: {error}", file=sys.stderr)
     return {
         "title": metadata.title,
         "description": metadata.description,
