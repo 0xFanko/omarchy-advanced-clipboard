@@ -271,6 +271,13 @@ class LocalServerTests(unittest.TestCase):
                         self.wfile.write(body)
                     except BrokenPipeError:
                         pass
+                elif self.path == "/large-metadata":
+                    body = b'<meta property="og:title" content="Large page">' + b"x" * (900 * 1024)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                 elif self.path == "/slow":
                     time.sleep(0.6)
                     self.send_response(200)
@@ -323,6 +330,15 @@ class LocalServerTests(unittest.TestCase):
     def test_enforces_body_limit_before_accumulating_extra_bytes(self):
         with self.assertRaisesRegex(link_preview.PreviewError, "too large"):
             self.client().fetch(self.url + "/large", accept="text/html", max_body_bytes=128)
+
+    def test_accepts_large_html_within_metadata_limit(self):
+        response, target = self.client().fetch(
+            self.url + "/large-metadata",
+            accept="text/html",
+            max_body_bytes=link_preview.HTML_MAX_BYTES,
+        )
+        metadata = preview_metadata.parse_metadata(response.body, "text/html", target.url)
+        self.assertEqual(metadata.title, "Large page")
 
     def test_enforces_total_timeout(self):
         with self.assertRaisesRegex(link_preview.PreviewError, "timed out"):

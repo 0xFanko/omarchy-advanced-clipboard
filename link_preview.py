@@ -11,7 +11,7 @@ from preview_media import fetch_preview_image
 from preview_metadata import PreviewMetadata, parse_metadata
 from preview_network import NetworkClient, PreviewError
 
-HTML_MAX_BYTES = 512 * 1024
+HTML_MAX_BYTES = 2 * 1024 * 1024
 HELPER_TIMEOUT_SECONDS = 14.0
 
 
