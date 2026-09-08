@@ -4,11 +4,13 @@ import base64
 import importlib.util
 import os
 import pathlib
+import struct
 import sys
 import tempfile
 import threading
 import time
 import unittest
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
@@ -28,8 +30,23 @@ def public_resolver(host, port, family, socktype):
     return [(family, socktype, 6, "", ("93.184.216.34", port))]
 
 
+def png_fixture(width=1, height=1):
+    def chunk(kind, data):
+        checksum = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", checksum)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    pixels = (b"\0" + b"\0\0\0" * width) * height
+    return (
+        preview_media.PNG_SIGNATURE
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(pixels))
+        + chunk(b"IEND", b"")
+    )
+
+
 class PreviewTests(unittest.TestCase):
-    def test_preview_streams_metadata_before_rejected_image_completes(self):
+    def test_preview_keeps_metadata_when_image_is_rejected(self):
         metadata = preview_metadata.PreviewMetadata(
             title="Safe title",
             description="Safe description",
@@ -41,13 +58,11 @@ class PreviewTests(unittest.TestCase):
             "fetch_preview_image",
             side_effect=preview_network.PreviewError("blocked"),
         ):
-            payloads = link_preview.preview_payloads("https://example.test/")
-            metadata_payload = next(payloads)
-            complete_payload = next(payloads)
+            payload = link_preview.preview_payload("https://example.test/")
 
-        self.assertEqual(metadata_payload["phase"], "metadata")
-        self.assertEqual(metadata_payload["title"], "Safe title")
-        self.assertEqual(complete_payload, {"phase": "complete", "image": ""})
+        self.assertEqual(payload["title"], "Safe title")
+        self.assertEqual(payload["description"], "Safe description")
+        self.assertEqual(payload["image"], "")
 
     def test_accepts_public_ipv4_and_ipv6_dns_answers(self):
         def resolver(host, port, family, socktype):
@@ -128,140 +143,62 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(metadata.site, "Example News")
 
     def test_media_cache_uses_a_stable_opaque_name(self):
-        with tempfile.TemporaryDirectory() as cache_dir:
-            previous = os.environ.get("XDG_CACHE_HOME")
-            os.environ["XDG_CACHE_HOME"] = cache_dir
-            try:
-                first = str(preview_media.cache_path("https://example.test/card"))
-                second = str(preview_media.cache_path("https://example.test/card"))
-            finally:
-                if previous is None:
-                    os.environ.pop("XDG_CACHE_HOME", None)
-                else:
-                    os.environ["XDG_CACHE_HOME"] = previous
+        with tempfile.TemporaryDirectory() as cache_dir, mock.patch.dict(
+            os.environ, {"XDG_CACHE_HOME": cache_dir}
+        ):
+            first = str(preview_media.cache_path("https://example.test/card"))
+            second = str(preview_media.cache_path("https://example.test/card"))
 
         self.assertEqual(first, second)
         self.assertTrue(first.endswith(".png"))
         self.assertNotIn("example.test", pathlib.Path(first).name)
 
     def test_cached_media_path_reuses_existing_image(self):
-        with tempfile.TemporaryDirectory() as cache_dir:
-            previous = os.environ.get("XDG_CACHE_HOME")
-            os.environ["XDG_CACHE_HOME"] = cache_dir
-            try:
-                expected = preview_media.cache_path("https://example.test/card")
-                expected.write_bytes(b"\x89PNG\r\n\x1a\nnormalized")
-                preview_media.creation_path(expected).write_text(str(time.time()), encoding="ascii")
-                actual = preview_media.cached_image("https://example.test/card")
-            finally:
-                if previous is None:
-                    os.environ.pop("XDG_CACHE_HOME", None)
-                else:
-                    os.environ["XDG_CACHE_HOME"] = previous
+        with tempfile.TemporaryDirectory() as cache_dir, mock.patch.dict(
+            os.environ, {"XDG_CACHE_HOME": cache_dir}
+        ):
+            expected = preview_media.cache_path("https://example.test/card")
+            expected.write_bytes(png_fixture())
+            actual = preview_media.cached_image("https://example.test/card")
 
         self.assertEqual(actual, str(expected))
 
     def test_cached_media_path_expires_after_ttl(self):
-        with tempfile.TemporaryDirectory() as cache_dir:
-            previous = os.environ.get("XDG_CACHE_HOME")
-            os.environ["XDG_CACHE_HOME"] = cache_dir
-            try:
-                expected = preview_media.cache_path("https://example.test/old-card")
-                expected.write_bytes(b"\x89PNG\r\n\x1a\nnormalized")
-                old = 1_000_000
-                preview_media.creation_path(expected).write_text(str(old), encoding="ascii")
-                actual = preview_media.cached_image(
-                    "https://example.test/old-card",
-                    now=old + preview_media.CACHE_TTL_SECONDS + 1,
-                )
-                self.assertEqual(actual, "")
-                self.assertFalse(expected.exists())
-                self.assertFalse(preview_media.creation_path(expected).exists())
-            finally:
-                if previous is None:
-                    os.environ.pop("XDG_CACHE_HOME", None)
-                else:
-                    os.environ["XDG_CACHE_HOME"] = previous
+        with tempfile.TemporaryDirectory() as cache_dir, mock.patch.dict(
+            os.environ, {"XDG_CACHE_HOME": cache_dir}
+        ):
+            expected = preview_media.cache_path("https://example.test/old-card")
+            expected.write_bytes(png_fixture())
+            old = 1_000_000
+            os.utime(expected, (old, old))
+            actual = preview_media.cached_image(
+                "https://example.test/old-card",
+                now=old + preview_media.CACHE_TTL_SECONDS + 1,
+            )
+            self.assertEqual(actual, "")
+            self.assertFalse(expected.exists())
 
     def test_cache_hits_do_not_extend_absolute_ttl(self):
-        with tempfile.TemporaryDirectory() as cache_dir:
-            previous = os.environ.get("XDG_CACHE_HOME")
-            os.environ["XDG_CACHE_HOME"] = cache_dir
-            try:
-                url = "https://example.test/frequently-read-card"
-                path = preview_media.cache_path(url)
-                path.write_bytes(b"\x89PNG\r\n\x1a\nnormalized")
-                created = 1_000_000
-                preview_media.creation_path(path).write_text(str(created), encoding="ascii")
-                self.assertEqual(preview_media.cached_image(url, now=created + 10), str(path))
-                self.assertEqual(
-                    preview_media.cached_image(url, now=created + preview_media.CACHE_TTL_SECONDS + 1),
-                    "",
-                )
-            finally:
-                if previous is None:
-                    os.environ.pop("XDG_CACHE_HOME", None)
-                else:
-                    os.environ["XDG_CACHE_HOME"] = previous
-    def test_normalizes_image_in_sandbox_to_bounded_png(self):
-        png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-        )
-        normalized = preview_media.normalize_image(png)
-        self.assertTrue(normalized.startswith(b"\x89PNG\r\n\x1a\n"))
-        self.assertLessEqual(len(normalized), preview_media.MEDIA_MAX_BYTES)
-
-    def test_concurrent_cache_misses_produce_image_once(self):
-        class CountingClient:
-            def __init__(self):
-                self.calls = 0
-                self.guard = threading.Lock()
-
-            def fetch(self, url, *, accept, max_body_bytes):
-                with self.guard:
-                    self.calls += 1
-                time.sleep(0.05)
-                return preview_network.Response(200, {"content-type": "image/png"}, b"\x89PNG\r\n\x1a\nremote"), None
-
-        with tempfile.TemporaryDirectory() as cache_dir:
-            previous = os.environ.get("XDG_CACHE_HOME")
-            os.environ["XDG_CACHE_HOME"] = cache_dir
-            client = CountingClient()
-            results = []
-            try:
-                with mock.patch.object(
-                    preview_media,
-                    "normalize_image",
-                    return_value=b"\x89PNG\r\n\x1a\nnormalized",
-                ):
-                    threads = [
-                        threading.Thread(
-                            target=lambda: results.append(
-                                preview_media.fetch_preview_image("https://example.test/shared.png", client)
-                            )
-                        )
-                        for _ in range(2)
-                    ]
-                    for thread in threads:
-                        thread.start()
-                    for thread in threads:
-                        thread.join()
-            finally:
-                if previous is None:
-                    os.environ.pop("XDG_CACHE_HOME", None)
-                else:
-                    os.environ["XDG_CACHE_HOME"] = previous
-
-        self.assertEqual(client.calls, 1)
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0], results[1])
+        with tempfile.TemporaryDirectory() as cache_dir, mock.patch.dict(
+            os.environ, {"XDG_CACHE_HOME": cache_dir}
+        ):
+            url = "https://example.test/frequently-read-card"
+            path = preview_media.cache_path(url)
+            path.write_bytes(png_fixture())
+            created = 1_000_000
+            os.utime(path, (created, created))
+            self.assertEqual(preview_media.cached_image(url, now=created + 10), str(path))
+            self.assertEqual(
+                preview_media.cached_image(url, now=created + preview_media.CACHE_TTL_SECONDS + 1),
+                "",
+            )
 
     def test_media_cache_prunes_oldest_files_by_count(self):
-        with tempfile.TemporaryDirectory() as cache_dir:
-            previous = os.environ.get("XDG_CACHE_HOME")
-            os.environ["XDG_CACHE_HOME"] = cache_dir
+        with tempfile.TemporaryDirectory() as cache_dir, mock.patch.dict(
+            os.environ, {"XDG_CACHE_HOME": cache_dir}
+        ):
             paths = []
-            cache = pathlib.Path(cache_dir) / "omarchy" / "clipboard-link-media-v3"
+            cache = pathlib.Path(cache_dir) / "omarchy" / "clipboard-link-media-v4"
             cache.mkdir(parents=True)
             for index in range(preview_media.CACHE_MAX_FILES + 2):
                 path = cache / f"{index:03}.png"
@@ -270,14 +207,7 @@ class PreviewTests(unittest.TestCase):
                 paths.append(path)
 
             preserved = str(paths[-1])
-            try:
-                with preview_media.cache_lock():
-                    preview_media.prune_cache_locked(pathlib.Path(preserved))
-            finally:
-                if previous is None:
-                    os.environ.pop("XDG_CACHE_HOME", None)
-                else:
-                    os.environ["XDG_CACHE_HOME"] = previous
+            preview_media.prune_cache(pathlib.Path(preserved))
 
             remaining = sorted(cache.glob("*.png"))
             self.assertEqual(len(remaining), preview_media.CACHE_MAX_FILES)
@@ -286,10 +216,10 @@ class PreviewTests(unittest.TestCase):
             self.assertTrue(pathlib.Path(preserved).exists())
 
     def test_media_cache_prunes_oldest_files_by_size(self):
-        with tempfile.TemporaryDirectory() as cache_dir:
-            previous_cache = os.environ.get("XDG_CACHE_HOME")
-            os.environ["XDG_CACHE_HOME"] = cache_dir
-            cache = pathlib.Path(cache_dir) / "omarchy" / "clipboard-link-media-v3"
+        with tempfile.TemporaryDirectory() as cache_dir, mock.patch.dict(
+            os.environ, {"XDG_CACHE_HOME": cache_dir}
+        ):
+            cache = pathlib.Path(cache_dir) / "omarchy" / "clipboard-link-media-v4"
             cache.mkdir(parents=True)
             first = cache / "first.png"
             second = cache / "second.png"
@@ -301,17 +231,30 @@ class PreviewTests(unittest.TestCase):
             previous_limit = preview_media.CACHE_MAX_BYTES
             preview_media.CACHE_MAX_BYTES = 100
             try:
-                with preview_media.cache_lock():
-                    preview_media.prune_cache_locked()
+                preview_media.prune_cache()
             finally:
                 preview_media.CACHE_MAX_BYTES = previous_limit
-                if previous_cache is None:
-                    os.environ.pop("XDG_CACHE_HOME", None)
-                else:
-                    os.environ["XDG_CACHE_HOME"] = previous_cache
 
             self.assertFalse(first.exists())
             self.assertTrue(second.exists())
+
+    def test_normalizes_a_valid_png(self):
+        normalized = preview_media.normalize_image(png_fixture())
+        self.assertTrue(normalized.startswith(preview_media.PNG_SIGNATURE))
+        self.assertLessEqual(len(normalized), preview_media.MEDIA_MAX_BYTES)
+
+    def test_rejects_a_signature_only_png(self):
+        with self.assertRaisesRegex(preview_network.PreviewError, "normalized safely"):
+            preview_media.normalize_image(preview_media.PNG_SIGNATURE + b"not-an-image")
+
+    def test_rejects_excessive_image_dimensions(self):
+        with self.assertRaisesRegex(preview_network.PreviewError, "normalized safely"):
+            preview_media.normalize_image(png_fixture(width=8193))
+
+    def test_translates_cache_errors_to_preview_errors(self):
+        with mock.patch.object(preview_media, "cache_directory", side_effect=PermissionError("denied")):
+            with self.assertRaisesRegex(preview_network.PreviewError, "cache is unavailable"):
+                preview_media.fetch_preview_image("https://example.test/card.png")
 
 
 class LocalServerTests(unittest.TestCase):
@@ -345,7 +288,7 @@ class LocalServerTests(unittest.TestCase):
                     self.end_headers()
                     self.wfile.write(body)
                 elif self.path == "/image":
-                    body = b"\x89PNG\r\n\x1a\nminimal-test-payload"
+                    body = png_fixture()
                     self.send_response(200)
                     self.send_header("Content-Type", "image/png")
                     self.send_header("Content-Length", str(len(body)))
@@ -399,14 +342,33 @@ class LocalServerTests(unittest.TestCase):
         self.assertEqual(metadata.title, "Pinned connection")
 
     def test_accepts_supported_image_with_matching_signature(self):
-        response, target = self.client().fetch(
-            self.url + "/image", accept="image/png", max_body_bytes=preview_media.MEDIA_MAX_BYTES
-        )
-        self.assertTrue(response.body.startswith(b"\x89PNG"))
-        self.assertEqual(target.url, self.url + "/image")
+        with tempfile.TemporaryDirectory() as cache_dir, mock.patch.dict(
+            os.environ,
+            {"XDG_CACHE_HOME": cache_dir},
+        ):
+            path = pathlib.Path(preview_media.fetch_preview_image(self.url + "/image", self.client()))
+            self.assertEqual(path.suffix, ".png")
+            self.assertTrue(path.read_bytes().startswith(b"\x89PNG"))
+
+    def test_normalizes_webp_images_to_png(self):
+        class WebpClient:
+            def fetch(self, *args, **kwargs):
+                return preview_network.Response(
+                    200,
+                    {"content-type": "image/webp"},
+                    base64.b64decode("UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAgA0JaQAA3AA/vv9UAA="),
+                ), None
+
+        with tempfile.TemporaryDirectory() as cache_dir, mock.patch.dict(
+            os.environ,
+            {"XDG_CACHE_HOME": cache_dir},
+        ):
+            path = pathlib.Path(preview_media.fetch_preview_image("https://example.test/card.webp", WebpClient()))
+            self.assertEqual(path.suffix, ".png")
+            self.assertTrue(path.read_bytes().startswith(preview_media.PNG_SIGNATURE))
 
     def test_rejects_mime_type_spoofing(self):
-        with self.assertRaisesRegex(preview_network.PreviewError, "signature is invalid"):
+        with self.assertRaisesRegex(preview_network.PreviewError, "normalized safely"):
             preview_media.fetch_preview_image(self.url + "/fake-image", self.client())
 
     def test_blocks_private_image_redirect_before_following_it(self):

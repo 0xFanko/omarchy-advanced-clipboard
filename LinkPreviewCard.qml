@@ -63,21 +63,14 @@ Rectangle {
     try { payload = JSON.parse(raw) } catch (error) { return }
     if (!payload || Number(payload.serial) !== root.requestSerial) return
 
-    if (payload.phase === "metadata") {
-      root.title = String(payload.title || "")
-      root.description = String(payload.description || "")
-      root.site = String(payload.site || "")
-      root.state = "ready"
-      return
-    }
-    if (payload.phase === "complete") {
-      timeout.stop()
-      root.imageSource = payload.image ? Util.fileUrl(String(payload.image)) : ""
-      return
-    }
     timeout.stop()
+    root.title = String(payload.title || "")
+    root.description = String(payload.description || "")
+    root.imageSource = payload.image ? Util.fileUrl(String(payload.image)) : ""
+    root.site = String(payload.site || "")
     root.errorMessage = String(payload.error || "")
-    root.state = payload.state === "empty" || payload.state === "error" ? payload.state : "error"
+    root.state = payload.state === "ready" || payload.state === "empty" || payload.state === "error"
+      ? payload.state : "error"
   }
 
   onEntryChanged: Qt.callLater(root.schedule)
@@ -90,8 +83,9 @@ Rectangle {
   Process {
     id: request
     command: []
-    stdout: SplitParser {
-      onRead: function(data) { root.receive(data) }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.receive(text)
     }
   }
 

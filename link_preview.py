@@ -27,22 +27,20 @@ def fetch_metadata(url: str) -> PreviewMetadata:
     return parse_metadata(response.body, content_type, target.url)
 
 
-def preview_payloads(url: str):
+def preview_payload(url: str) -> dict[str, str]:
     metadata = fetch_metadata(url)
-    yield {
-        "phase": "metadata",
-        "title": metadata.title,
-        "description": metadata.description,
-        "site": metadata.site,
-    }
-
     image = ""
     if metadata.image_url:
         try:
             image = fetch_preview_image(metadata.image_url)
         except PreviewError:
             pass
-    yield {"phase": "complete", "image": image}
+    return {
+        "title": metadata.title,
+        "description": metadata.description,
+        "image": image,
+        "site": metadata.site,
+    }
 
 
 def result(serial: int, state: str, **values: str) -> str:
@@ -61,9 +59,9 @@ def main(argv: list[str]) -> int:
     previous_handler = signal.signal(signal.SIGALRM, deadline_expired)
     signal.setitimer(signal.ITIMER_REAL, HELPER_TIMEOUT_SECONDS)
     try:
-        for preview in preview_payloads(argv[1]):
-            state = "ready" if preview.get("phase") == "metadata" else "complete"
-            print(result(serial, state, **preview), flush=True)
+        preview = preview_payload(argv[1])
+        state = "ready" if any(preview.values()) else "empty"
+        print(result(serial, state, **preview))
     except PreviewError as error:
         print(result(serial, "error", error=str(error)))
     except Exception:
