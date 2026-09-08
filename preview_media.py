@@ -20,7 +20,7 @@ MEDIA_TIMEOUT_SECONDS = 5.0
 CACHE_MAX_FILES = 100
 CACHE_MAX_BYTES = 100 * 1024 * 1024
 CACHE_TTL_SECONDS = 24 * 60 * 60
-NORMALIZED_EXTENSION = ".webp"
+NORMALIZED_EXTENSION = ".png"
 SUPPORTED_IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
 IMAGE_SIGNATURES = {
     "image/jpeg": (b"\xff\xd8\xff",),
@@ -33,7 +33,7 @@ IMAGE_SIGNATURES = {
 def cache_directory() -> Path:
     cache_root = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
     # Versioned so files cached before sandbox normalization are never trusted.
-    path = Path(cache_root) / "omarchy" / "clipboard-link-media-v2"
+    path = Path(cache_root) / "omarchy" / "clipboard-link-media-v3"
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return path
 
@@ -150,7 +150,7 @@ def normalize_image(body: bytes) -> bytes:
             "-limit", "thread", "1",
             "-limit", "time", "5",
             "input[0]", "-auto-orient", "-thumbnail", "1280x720>",
-            "-strip", "-quality", "82", "webp:output.webp",
+            "-strip", "png:output.png",
         ]
         try:
             completed = subprocess.run(
@@ -164,11 +164,11 @@ def normalize_image(body: bytes) -> bytes:
         except subprocess.TimeoutExpired as error:
             raise PreviewError("The preview image normalization timed out.") from error
 
-        output = work / "output.webp"
+        output = work / "output.png"
         if completed.returncode != 0 or not output.is_file():
             raise PreviewError("The preview image could not be normalized safely.")
         normalized = output.read_bytes()
-        if not normalized.startswith(b"RIFF") or normalized[8:12] != b"WEBP" or len(normalized) > MEDIA_MAX_BYTES:
+        if not normalized.startswith(b"\x89PNG\r\n\x1a\n") or len(normalized) > MEDIA_MAX_BYTES:
             raise PreviewError("The normalized preview image is invalid.")
         return normalized
 

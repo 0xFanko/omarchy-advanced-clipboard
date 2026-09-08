@@ -141,7 +141,7 @@ class PreviewTests(unittest.TestCase):
                     os.environ["XDG_CACHE_HOME"] = previous
 
         self.assertEqual(first, second)
-        self.assertTrue(first.endswith(".webp"))
+        self.assertTrue(first.endswith(".png"))
         self.assertNotIn("example.test", pathlib.Path(first).name)
 
     def test_cached_media_path_reuses_existing_image(self):
@@ -150,7 +150,7 @@ class PreviewTests(unittest.TestCase):
             os.environ["XDG_CACHE_HOME"] = cache_dir
             try:
                 expected = preview_media.cache_path("https://example.test/card")
-                expected.write_bytes(b"RIFF1234WEBP")
+                expected.write_bytes(b"\x89PNG\r\n\x1a\nnormalized")
                 preview_media.creation_path(expected).write_text(str(time.time()), encoding="ascii")
                 actual = preview_media.cached_image("https://example.test/card")
             finally:
@@ -167,7 +167,7 @@ class PreviewTests(unittest.TestCase):
             os.environ["XDG_CACHE_HOME"] = cache_dir
             try:
                 expected = preview_media.cache_path("https://example.test/old-card")
-                expected.write_bytes(b"RIFF1234WEBP")
+                expected.write_bytes(b"\x89PNG\r\n\x1a\nnormalized")
                 old = 1_000_000
                 preview_media.creation_path(expected).write_text(str(old), encoding="ascii")
                 actual = preview_media.cached_image(
@@ -190,7 +190,7 @@ class PreviewTests(unittest.TestCase):
             try:
                 url = "https://example.test/frequently-read-card"
                 path = preview_media.cache_path(url)
-                path.write_bytes(b"RIFF1234WEBP")
+                path.write_bytes(b"\x89PNG\r\n\x1a\nnormalized")
                 created = 1_000_000
                 preview_media.creation_path(path).write_text(str(created), encoding="ascii")
                 self.assertEqual(preview_media.cached_image(url, now=created + 10), str(path))
@@ -203,13 +203,12 @@ class PreviewTests(unittest.TestCase):
                     os.environ.pop("XDG_CACHE_HOME", None)
                 else:
                     os.environ["XDG_CACHE_HOME"] = previous
-    def test_normalizes_image_in_sandbox_to_bounded_webp(self):
+    def test_normalizes_image_in_sandbox_to_bounded_png(self):
         png = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         )
         normalized = preview_media.normalize_image(png)
-        self.assertTrue(normalized.startswith(b"RIFF"))
-        self.assertEqual(normalized[8:12], b"WEBP")
+        self.assertTrue(normalized.startswith(b"\x89PNG\r\n\x1a\n"))
         self.assertLessEqual(len(normalized), preview_media.MEDIA_MAX_BYTES)
 
     def test_concurrent_cache_misses_produce_image_once(self):
@@ -230,7 +229,11 @@ class PreviewTests(unittest.TestCase):
             client = CountingClient()
             results = []
             try:
-                with mock.patch.object(preview_media, "normalize_image", return_value=b"RIFF1234WEBP"):
+                with mock.patch.object(
+                    preview_media,
+                    "normalize_image",
+                    return_value=b"\x89PNG\r\n\x1a\nnormalized",
+                ):
                     threads = [
                         threading.Thread(
                             target=lambda: results.append(
@@ -258,10 +261,10 @@ class PreviewTests(unittest.TestCase):
             previous = os.environ.get("XDG_CACHE_HOME")
             os.environ["XDG_CACHE_HOME"] = cache_dir
             paths = []
-            cache = pathlib.Path(cache_dir) / "omarchy" / "clipboard-link-media-v2"
+            cache = pathlib.Path(cache_dir) / "omarchy" / "clipboard-link-media-v3"
             cache.mkdir(parents=True)
             for index in range(preview_media.CACHE_MAX_FILES + 2):
-                path = cache / f"{index:03}.webp"
+                path = cache / f"{index:03}.png"
                 path.write_bytes(b"x")
                 os.utime(path, (index + 1, index + 1))
                 paths.append(path)
@@ -276,7 +279,7 @@ class PreviewTests(unittest.TestCase):
                 else:
                     os.environ["XDG_CACHE_HOME"] = previous
 
-            remaining = sorted(cache.glob("*.webp"))
+            remaining = sorted(cache.glob("*.png"))
             self.assertEqual(len(remaining), preview_media.CACHE_MAX_FILES)
             self.assertFalse(paths[0].exists())
             self.assertFalse(paths[1].exists())
@@ -286,10 +289,10 @@ class PreviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as cache_dir:
             previous_cache = os.environ.get("XDG_CACHE_HOME")
             os.environ["XDG_CACHE_HOME"] = cache_dir
-            cache = pathlib.Path(cache_dir) / "omarchy" / "clipboard-link-media-v2"
+            cache = pathlib.Path(cache_dir) / "omarchy" / "clipboard-link-media-v3"
             cache.mkdir(parents=True)
-            first = cache / "first.webp"
-            second = cache / "second.webp"
+            first = cache / "first.png"
+            second = cache / "second.png"
             first.write_bytes(b"a" * 60)
             second.write_bytes(b"b" * 60)
             os.utime(first, (1, 1))
