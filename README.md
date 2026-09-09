@@ -1,36 +1,51 @@
-# Omarchy Clipboard
+<p align="center">
+  <img src="assets/clipboard-logo.png" alt="Advanced Clipboard logo" width="112">
+</p>
 
-A plugin for [Omarchy](https://omarchy.org/) that improves the clipboard history experience.
+<h1 align="center">Advanced Clipboard for Omarchy</h1>
 
-It makes it easy to find and reuse previously copied text, links, files, and images directly from the Omarchy interface.
+<p align="center">
+  A keyboard-first clipboard history plugin with search, previews, editing, retention controls, and application exclusions.
+</p>
 
 ## Features
 
-- search through clipboard history;
-- preview text, files, and images;
-- detect copied links and show a native Open Graph preview card;
-- display the source application;
-- show detailed information such as type, date, time, URL, and title;
-- edit text entries directly from the clipboard history;
-- delete one entry or clear the entire history;
-- customize every internal keyboard shortcut;
-- exclude selected applications from clipboard history.
+- Search and navigate clipboard history from the keyboard.
+- Preview copied text, files, and images.
+- Display native Open Graph and Twitter Card previews for copied links.
+- Show the source application and capture details.
+- Edit text entries directly from the clipboard history.
+- Copy, paste, open, or delete individual entries.
+- Clear the complete history.
+- Configure every internal keyboard shortcut.
+- Exclude selected applications from clipboard capture.
+- Automatically remove entries older than a configurable retention period.
+
+## Requirements
+
+- Omarchy with Quickshell
+- `python3`
+- `curl`
+- ImageMagick with JPEG, PNG, GIF, and WebP support
+- `wl-clipboard`, `jq`, and `hyprctl`
+
+These dependencies are included with a standard Omarchy installation.
 
 ## Configuration
 
-Les réglages utilisateur sont lus depuis la racine du plugin :
+The plugin reads its user configuration from:
 
 ```text
-<racine-du-plugin>/clipboard.json
+<plugin-directory>/clipboard.json
 ```
 
-Depuis cette racine, copiez le fichier d’exemple puis adaptez-le :
+Copy the example file from the plugin directory before changing any settings:
 
 ```bash
 cp clipboard.example.json clipboard.json
 ```
 
-`clipboard.json` est ignoré par Git afin que les réglages personnels ne bloquent pas les mises à jour du plugin.
+The personal `clipboard.json` file is ignored by Git so local settings do not interfere with plugin updates.
 
 ```json
 {
@@ -58,52 +73,74 @@ cp clipboard.example.json clipboard.json
 }
 ```
 
-`historyRetentionDays` fixe l’âge maximal des entrées en jours. La valeur `0`
-(valeur par défaut) conserve l’historique sans limite de durée; la limite de
-500 entrées reste appliquée. Les anciennes entrées sans horodatage sont
-conservées, car leur âge ne peut pas être déterminé de façon fiable. Utilisez
-un entier JSON compris entre `0` et `36500`. Une valeur négative, fractionnaire
-ou textuelle est invalide et revient à `0`; une valeur supérieure est plafonnée
-à `36500`. Les fichiers d’image capturés sont supprimés avec leur entrée
-expirée, tandis que les fichiers externes référencés par une URI `file://` ne
-sont jamais supprimés.
+### Keyboard shortcuts
 
-Les raccourcis utilisent la syntaxe Qt (`Ctrl+X`, `Shift+Delete`, etc.). Ils doivent être uniques et la configuration est rechargée automatiquement. Le raccourci d’ouverture global `Super+Ctrl+V` reste géré séparément par Hyprland.
-
-| Clé | Action |
+| Setting | Action |
 | --- | --- |
-| `close` | Effacer la recherche, puis fermer |
-| `previousEntry` / `nextEntry` | Sélectionner l’entrée précédente/suivante |
-| `previousPage` / `nextPage` | Reculer/avancer de six entrées |
-| `firstEntry` / `lastEntry` | Sélectionner la première/dernière entrée |
-| `pasteEntry` | Coller l’entrée sélectionnée |
-| `copyEntry` | Copier sans coller |
-| `openEntry` | Ouvrir l’entrée |
-| `editEntry` | Modifier l’entrée texte sélectionnée |
-| `saveEdit` | Enregistrer la modification en cours |
-| `deleteEntry` | Supprimer l’entrée |
-| `clearHistory` | Effacer tout l’historique |
+| `close` | Clear the search field, then close the overlay |
+| `previousEntry` / `nextEntry` | Select the previous or next entry |
+| `previousPage` / `nextPage` | Move backward or forward by six entries |
+| `firstEntry` / `lastEntry` | Select the first or last entry |
+| `pasteEntry` | Paste the selected entry |
+| `copyEntry` | Copy the selected entry without pasting it |
+| `openEntry` | Open the selected entry |
+| `editEntry` | Edit the selected text entry |
+| `saveEdit` | Save the current edit |
+| `deleteEntry` | Delete the selected entry |
+| `clearHistory` | Clear the complete history |
 
-Seules les entrées affichées avec le type `Text` peuvent être modifiées. `editEntry` ouvre l’éditeur, `saveEdit` enregistre le nouveau contenu et `close` annule la modification.
+Shortcuts use Qt syntax such as `Ctrl+X` or `Shift+Delete` and must be unique. Configuration changes are reloaded automatically. The global `Super+Ctrl+V` shortcut is managed separately by Hyprland.
 
-Évitez d’attribuer une lettre seule : elle ne pourra plus être saisie dans la recherche lorsque le clipboard est ouvert.
+Avoid assigning a single letter: while the clipboard overlay is open, that letter could no longer be entered in the search field.
 
-Une application exclue est reconnue par son nom affiché ou par sa classe Hyprland, sans tenir compte de la casse. Seules les chaînes non vides sont prises en compte. Les doublons sont ignorés et la liste est limitée aux 100 premières applications distinctes. Pour lister les classes ouvertes :
+Only entries shown as `Text` can be edited. `editEntry` opens the editor, `saveEdit` saves the new content, and `close` cancels the edit.
+
+### History retention
+
+`historyRetentionDays` defines the maximum entry age in days:
+
+- `0` keeps history indefinitely while the 500-entry limit still applies.
+- Valid values are integers from `0` to `36500`.
+- Negative, fractional, or string values are invalid and fall back to `0`.
+- Values above `36500` are capped at `36500`.
+- Legacy entries without a timestamp are preserved because their age cannot be determined reliably.
+
+Captured image files are removed when their corresponding entries expire. External files referenced through `file://` URLs are never deleted.
+
+### Excluded applications
+
+Applications are matched by their display name or Hyprland class, case-insensitively. Empty values and duplicates are ignored, and the list is limited to the first 100 unique applications.
+
+List the classes of currently open applications with:
 
 ```bash
 hyprctl clients -j | jq -r '.[].class' | sort -u
 ```
 
-Les nouvelles copies provenant d’une application exclue ne sont pas enregistrées. Les anciennes entrées restent présentes dans l’historique.
+New clipboard content from excluded applications is not recorded. Existing history entries are not removed.
 
-### Aperçu des liens
+## Link previews and security
 
-Pour une entrée HTTP(S), le panneau d’information construit une carte native à partir des métadonnées Open Graph ou Twitter Card de la page : image, titre, description et nom du site. La récupération s’exécute hors du processus d’interface dans `link_preview.py`. Chaque résolution DNS et chaque redirection, y compris celles de l’image, doit rester sur une adresse publique; les réseaux privés, loopback, link-local, multicast et les services de métadonnées sont bloqués. L’adresse validée est épinglée pour chaque connexion afin de limiter le DNS rebinding. Le document HTML est limité à 2 Mio et l’image à 5 Mio. Les images JPEG, PNG, GIF et WebP sont acceptées en entrée puis réencodées en PNG compatible avec Qt6.
+HTTP and HTTPS entries can display a native preview card built from Open Graph or Twitter Card metadata: image, title, description, and site name. Fetching runs outside the interface process through `link_preview.py`.
 
-La carte est non interactive. Sa récupération attend 400 ms après la sélection afin d’éviter les requêtes pendant un défilement rapide. Les métadonnées et l’image sont envoyées ensemble à l’interface dans une seule réponse. Avant mise en cache, ImageMagick décode l’image dans un sous-processus avec un format d’entrée imposé, limite ses ressources et ses dimensions, puis la réencode en PNG. Les images sont mises en cache pendant 24 heures, dans la limite de 100 fichiers et 100 Mio; les plus anciennes sont supprimées automatiquement. Si l’image est absente, invalide ou bloquée, le titre et la description restent affichés. Une erreur réseau ou une page sans métadonnées n’empêche pas les actions copier, coller, ouvrir et modifier.
+The preview implementation treats every remote page as untrusted:
 
-L’aperçu nécessite `python3`, `curl` et ImageMagick, inclus dans Omarchy. Il n’exécute aucun contenu web, n’utilise aucun navigateur ni service externe ou payant, et ignore les variables de proxy pour conserver l’épinglage réseau.
+- Every DNS resolution and redirect, including image redirects, must resolve to a public address.
+- Private, loopback, link-local, multicast, and metadata-service addresses are blocked.
+- The validated address is pinned for each connection to reduce DNS-rebinding risk.
+- Proxy environment variables are ignored to preserve network pinning.
+- HTML responses are limited to 2 MiB and images to 5 MiB.
+- JPEG, PNG, GIF, and WebP inputs are decoded in an isolated ImageMagick subprocess with resource and dimension limits, then re-encoded as Qt-compatible PNG files.
+- Preview images are cached for 24 hours, up to 100 files and 100 MiB; older files are pruned automatically.
 
-## Projet
+Preview loading starts 400 ms after selection to avoid unnecessary requests during rapid navigation. If an image is absent, invalid, or blocked, available title and description metadata remain visible. A preview failure never blocks copy, paste, open, edit, search, or history loading.
 
-Ce plugin est basé sur le clipboard natif d’Omarchy et est actuellement en développement sur la branche `dev`.
+## Data storage
+
+- History: `~/.local/state/omarchy/clipboard-history.json`
+- Captured images: `~/.local/state/omarchy/clipboard-images/`
+- Link-preview cache: the user cache directory under `omarchy-clipboard/link-previews/`
+
+## Development
+
+Feature development takes place on the `dev` branch. The `main` branch contains the minimal distributable plugin.
