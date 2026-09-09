@@ -4,21 +4,35 @@ import Quickshell.Wayland
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "ClipboardConfig.js" as ClipboardConfig
 import "ClipboardHistory.js" as ClipboardHistory
 
 Item {
   id: root
 
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
+  property var manifest: null
   property bool opened: false
   property string filterText: ""
   property int selectedIndex: 0
   property bool cursorActive: false
   property bool clearConfirmOpen: false
+  property bool editMode: false
+  property int editingHistoryIndex: -1
+  property string editingEntryKey: ""
+  property string editDraftText: ""
+  property string editError: ""
   property var history: []
+  property var pendingImageCleanupPaths: []
+  property bool initialized: false
+  property var settings: ClipboardConfig.defaultConfig()
 
-  property string historyPath: Quickshell.env("HOME") + "/.local/state/omarchy/clipboard-history.json"
-  property string captureScript: root.omarchyPath + "/shell/plugins/clipboard/capture.sh"
+  readonly property string stateRoot: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
+  property string historyPath: root.stateRoot + "/omarchy/clipboard-history.json"
+  property string imageDirectory: root.stateRoot + "/omarchy/clipboard-images"
+  readonly property string pluginPath: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : root.omarchyPath + "/shell/plugins/clipboard"
+  readonly property string configPath: root.pluginPath + "/clipboard.json"
+  property string captureScript: root.pluginPath + "/capture.sh"
   // Shares the [menu] surface tokens — themes that style the menu also
   // style the clipboard. Selected-row colors composed in the
   // singleton so consumers drop them straight into Rectangle bindings.
@@ -34,12 +48,23 @@ Item {
   property int contentMargin: Style.spacing.panelPadding
   property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
   property int contentSpacing: Style.spacing.md
-  property int cardWidth: Math.min(Style.space(875), panel.width - Style.gapsOut * 2)
-  property int cardHeight: Math.min(Style.space(600), panel.height - Style.gapsOut * 2)
+  property int cardWidth: Math.max(0, Math.min(Style.space(875), panel.width - Style.gapsOut * 2))
+  property int cardHeight: Math.max(0, Math.min(Style.space(600), panel.height - Style.gapsOut * 2))
   property int rowHeight: Math.max(Style.space(50), Style.font.body + Style.font.caption + Style.spacing.rowPaddingX * 2)
+  property int informationRowHeight: Math.max(Style.space(44), Style.font.title + Style.spacing.controlPaddingY * 2)
+  readonly property bool showDetails: root.cardWidth >= Style.space(640)
   property int historyLimit: 500
+  readonly property var shortcuts: root.settings.shortcuts
+
+  function initialize() {
+    if (root.initialized) return
+    root.initialized = true
+    initProc.running = true
+  }
 
   function open(payloadJson) {
+    root.resetEditState()
+    root.applyHistoryRetention(root.history, true)
     root.opened = true
     root.filterText = ""
     root.selectedIndex = 0
@@ -50,8 +75,89 @@ Item {
   }
 
   function close() {
+    root.resetEditState()
     root.cancelClearHistory()
     root.opened = false
+  }
+
+  function resetEditState() {
+    root.editMode = false
+    root.editingHistoryIndex = -1
+    root.editingEntryKey = ""
+    root.editDraftText = ""
+    root.editError = ""
+  }
+
+  function selectedRow() {
+    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return null
+    return displayModel.get(root.selectedIndex)
+  }
+
+  function canEditSelected() {
+    var row = root.selectedRow()
+    return row && row.entryType === "text" && row.typeLabel === "Text"
+  }
+
+  function beginEdit() {
+    if (!root.canEditSelected()) return
+
+    var row = root.selectedRow()
+    var entry = ClipboardHistory.normalizeEntry(root.history[row.historyIndex])
+    if (!entry || entry.type !== "text") return
+
+    root.editingHistoryIndex = row.historyIndex
+    root.editingEntryKey = ClipboardHistory.entryKey(entry)
+    root.editDraftText = entry.text
+    root.editError = ""
+    root.editMode = true
+    Qt.callLater(function() { detailsPane.focusEditor() })
+  }
+
+  function currentEditingHistoryIndex() {
+    if (!root.editingEntryKey) return -1
+    if (root.editingHistoryIndex >= 0 && root.editingHistoryIndex < root.history.length) {
+      var originalEntry = ClipboardHistory.normalizeEntry(root.history[root.editingHistoryIndex])
+      if (originalEntry && ClipboardHistory.entryKey(originalEntry) === root.editingEntryKey)
+        return root.editingHistoryIndex
+    }
+    for (var i = 0; i < root.history.length; i++) {
+      var entry = ClipboardHistory.normalizeEntry(root.history[i])
+      if (entry && ClipboardHistory.entryKey(entry) === root.editingEntryKey) return i
+    }
+    return -1
+  }
+
+  function saveEdit() {
+    if (!root.editMode) return
+    var nextText = detailsPane.editedText
+    if (!String(nextText).trim()) {
+      root.editError = "Clipboard text cannot be empty."
+      return
+    }
+
+    var targetIndex = root.currentEditingHistoryIndex()
+    if (targetIndex < 0) {
+      root.editError = "This clipboard entry no longer exists."
+      return
+    }
+
+    root.history = ClipboardHistory.updateTextEntry(root.history, targetIndex, nextText)
+    root.saveHistory()
+    root.resetEditState()
+    root.rebuildDisplay()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function cancelEdit() {
+    if (!root.editMode) return
+    root.resetEditState()
+    root.rebuildDisplay()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function clearSearchOrClose() {
+    if (root.filterText) root.setFilter("")
+    else root.close()
   }
 
   function toggle() {
@@ -67,12 +173,67 @@ Item {
     return ClipboardHistory.entryKey(entry)
   }
 
+  function escapeProcessPattern(value) {
+    var text = String(value || "")
+    var special = "\\^$.*+?()[]{}|"
+    var escaped = ""
+    for (var i = 0; i < text.length; i++) {
+      var character = text.charAt(i)
+      if (special.indexOf(character) >= 0) escaped += "\\"
+      escaped += character
+    }
+    return escaped
+  }
+
   function loadHistory(raw) {
-    root.history = ClipboardHistory.parseHistory(raw)
-    if (root.opened) root.rebuildDisplay()
+    root.applyHistoryRetention(ClipboardHistory.parseHistory(raw), true)
+    if (root.opened && !root.editMode) root.rebuildDisplay()
+  }
+
+  function queueExpiredImageFiles(paths) {
+    var queued = root.pendingImageCleanupPaths.slice()
+    for (var i = 0; i < paths.length; i++) {
+      var path = String(paths[i] || "")
+      if (ClipboardHistory.isManagedImagePath(path, root.imageDirectory) && queued.indexOf(path) < 0)
+        queued.push(path)
+    }
+    root.pendingImageCleanupPaths = queued
+  }
+
+  function removePersistedExpiredImageFiles() {
+    if (root.pendingImageCleanupPaths.length === 0) return
+
+    var cleanup = ClipboardHistory.persistedImageCleanupResult(
+      root.pendingImageCleanupPaths,
+      ClipboardHistory.parseHistory(historyFile.text()),
+      root.imageDirectory
+    )
+    root.pendingImageCleanupPaths = cleanup.referencedPaths
+    var command = ["rm", "-f", "--"]
+    for (var i = 0; i < cleanup.deletablePaths.length; i++) command.push(cleanup.deletablePaths[i])
+    if (command.length > 3) Quickshell.execDetached(command)
+  }
+
+  function applyHistoryRetention(values, persistChanges) {
+    var result = ClipboardHistory.historyRetentionResult(values, root.settings.historyRetentionDays)
+    var changed = result.entries.length !== values.length
+    root.history = result.entries
+    root.queueExpiredImageFiles(result.expiredImagePaths)
+    if (changed && persistChanges)
+      historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
+    return changed
+  }
+
+  function loadSettings(raw) {
+    var nextSettings = ClipboardConfig.parseConfig(raw)
+    if (!nextSettings.valid) console.warn("Clipboard: invalid config at " + root.configPath + "; using defaults")
+    root.settings = nextSettings
+    var changed = root.applyHistoryRetention(root.history, true)
+    if (changed && root.opened && !root.editMode) root.rebuildDisplay()
   }
 
   function saveHistory() {
+    root.applyHistoryRetention(root.history, false)
     historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
   }
 
@@ -82,7 +243,7 @@ Item {
 
     root.history = ClipboardHistory.addEntry(root.history, normalized, root.historyLimit)
     root.saveHistory()
-    if (root.opened) root.rebuildDisplay()
+    if (root.opened && !root.editMode) root.rebuildDisplay()
   }
 
   function addClipboardJson(line) {
@@ -138,11 +299,18 @@ Item {
       var row = rows[i]
       displayModel.append({
         entryType: row.entryType,
+        typeLabel: row.typeLabel,
         fullText: row.fullText,
         previewText: row.previewText,
         previewImage: row.previewImage ? Util.fileUrl(row.previewImage) : "",
         path: row.path,
         mime: row.mime,
+        sourceApp: row.sourceApp,
+        sourceIcon: row.sourceIcon,
+        capturedDate: row.capturedDate,
+        capturedTime: row.capturedTime,
+        url: row.url,
+        title: row.title,
         historyIndex: row.index
       })
     }
@@ -212,6 +380,19 @@ Item {
     root.openSelected(row)
   }
 
+  function pasteCurrentEntry() {
+    if (root.cursorActive) root.activateIndex(root.selectedIndex)
+    else if (displayModel.count > 0) root.cursorActive = true
+  }
+
+  function copyCurrentEntry() {
+    if (root.cursorActive) root.copyIndex(root.selectedIndex)
+  }
+
+  function openCurrentEntry() {
+    if (root.cursorActive) root.openIndex(root.selectedIndex)
+  }
+
   function applySelected(row) {
     if (!row) return
     root.opened = false
@@ -238,7 +419,8 @@ Item {
     Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-clipboard-open", "--history-index", String(row.historyIndex)])
   }
 
-  Component.onCompleted: initProc.running = true
+  Component.onCompleted: Qt.callLater(root.initialize)
+  onManifestChanged: root.initialize()
 
   ListModel { id: displayModel }
 
@@ -255,6 +437,18 @@ Item {
     printErrors: false
     onLoaded: root.loadHistory(text())
     onLoadFailed: root.loadHistory("[]")
+    onSaved: root.removePersistedExpiredImageFiles()
+    onSaveFailed: function(error) { console.warn("Clipboard: failed to save history: " + error) }
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: configFile
+    path: root.configPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.loadSettings(text())
+    onLoadFailed: root.loadSettings("{}")
     onFileChanged: reload()
   }
 
@@ -263,7 +457,13 @@ Item {
   // the shell exits, however it exits, so no further lifecycle management.
   Process {
     id: initProc
-    command: ["pkill", "-f", "wl-paste .*--watch .*/shell/plugins/clipboard/capture\\.sh"]
+    command: [
+      "pkill",
+      "-f",
+      "^wl-paste --type (text|image/png) --watch "
+        + root.escapeProcessPattern(root.captureScript)
+        + " (text|image/png)$"
+    ]
     onExited: {
       currentProc.running = true
       textWatchProc.running = true
@@ -321,6 +521,98 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
 
+    Shortcut {
+      sequence: String(root.shortcuts.close)
+      enabled: root.opened && !root.clearConfirmOpen
+      autoRepeat: false
+      onActivated: root.editMode ? root.cancelEdit() : root.clearSearchOrClose()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.editEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      autoRepeat: false
+      onActivated: root.beginEdit()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.saveEdit)
+      enabled: root.opened && !root.clearConfirmOpen && root.editMode
+      autoRepeat: false
+      onActivated: root.saveEdit()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.previousEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      onActivated: root.select(-1)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.nextEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      onActivated: root.select(1)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.previousPage)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      onActivated: root.select(-6)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.nextPage)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      onActivated: root.select(6)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.firstEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      onActivated: root.selectAbsolute(0)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.lastEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      onActivated: root.selectAbsolute(displayModel.count - 1)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.pasteEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      autoRepeat: false
+      onActivated: root.pasteCurrentEntry()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.copyEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      autoRepeat: false
+      onActivated: root.copyCurrentEntry()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.openEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      autoRepeat: false
+      onActivated: root.openCurrentEntry()
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.deleteEntry)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      autoRepeat: false
+      onActivated: root.removeDisplayIndex(root.selectedIndex)
+    }
+
+    Shortcut {
+      sequence: String(root.shortcuts.clearHistory)
+      enabled: root.opened && !root.clearConfirmOpen && !root.editMode
+      autoRepeat: false
+      onActivated: root.requestClearHistory()
+    }
+
     Rectangle {
       anchors.fill: parent
       color: root.scrim
@@ -356,40 +648,8 @@ Item {
             return
           }
 
-          if (event.key === Qt.Key_Escape) {
-            if (root.filterText) root.setFilter("")
-            else root.close()
-            event.accepted = true
-          } else if (Util.editsFilter(event, root.filterText)) {
+          if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
-            event.accepted = true
-          } else if (event.key === Qt.Key_Delete) {
-            if (event.modifiers & Qt.ShiftModifier) root.requestClearHistory()
-            else root.removeDisplayIndex(root.selectedIndex)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.select(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.select(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageUp) {
-            root.select(-6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageDown) {
-            root.select(6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Home) {
-            root.selectAbsolute(0)
-            event.accepted = true
-          } else if (event.key === Qt.Key_End) {
-            root.selectAbsolute(displayModel.count - 1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.cursorActive && (event.modifiers & Qt.AltModifier)) root.openIndex(root.selectedIndex)
-            else if (root.cursorActive && (event.modifiers & Qt.ShiftModifier)) root.copyIndex(root.selectedIndex)
-            else if (root.cursorActive) root.activateIndex(root.selectedIndex)
-            else if (displayModel.count > 0) root.cursorActive = true
             event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
             root.setFilter(root.filterText + event.text)
@@ -435,7 +695,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: root.filterText || "Search clipboard…"
+            text: root.filterText || "Dev : Search clipboard…"
             color: root.foreground
             opacity: root.filterText ? 1 : 0.58
             font.family: root.fontFamily
@@ -446,14 +706,14 @@ Item {
 
         Item {
           width: parent.width
-          height: parent.height - root.headerHeight - root.contentSpacing
+          height: Math.max(0, parent.height - root.headerHeight - root.contentSpacing)
 
           Row {
             anchors.fill: parent
             spacing: 0
 
             Item {
-              width: parent.width / 2
+              width: root.editMode ? 0 : (root.showDetails && displayModel.count > 0 ? parent.width / 2 : parent.width)
               height: parent.height
               clip: true
 
@@ -463,6 +723,7 @@ Item {
                 anchors.rightMargin: root.contentMargin
                 model: displayModel
                 clip: true
+                interactive: !root.editMode
                 spacing: Style.space(4)
                 boundsBehavior: Flickable.StopAtBounds
 
@@ -515,6 +776,7 @@ Item {
 
                   MouseArea {
                     anchors.fill: parent
+                    enabled: !root.editMode
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onPositionChanged: function(mouse) {
@@ -531,13 +793,21 @@ Item {
             }
 
             Item {
-              width: parent.width / 2
+              id: detailsPane
+              visible: (root.showDetails || root.editMode) && displayModel.count > 0
+              width: visible ? (root.editMode && !root.showDetails ? parent.width : parent.width / 2) : 0
               height: parent.height
               clip: true
 
               property var activeRow: displayModel.count > 0 && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count ? displayModel.get(root.selectedIndex) : null
+              readonly property string editedText: clipboardInformation.editedText
+
+              function focusEditor() {
+                clipboardInformation.focusEditor()
+              }
 
               Rectangle {
+                visible: root.showDetails
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
@@ -545,34 +815,23 @@ Item {
                 color: Util.alpha(root.border, 0.28)
               }
 
-              Text {
-                visible: parent.activeRow && !parent.activeRow.previewImage
+              ClipboardInformation {
+                id: clipboardInformation
                 anchors.fill: parent
                 anchors.leftMargin: root.contentMargin
-                anchors.rightMargin: 0
-                anchors.topMargin: 0
-                anchors.bottomMargin: 0
-                text: parent.activeRow ? parent.activeRow.fullText : ""
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                wrapMode: Text.WrapAnywhere
-                elide: Text.ElideRight
-                verticalAlignment: Text.AlignTop
-              }
-
-              Image {
-                visible: parent.activeRow && parent.activeRow.previewImage
-                anchors.fill: parent
-                anchors.leftMargin: root.contentMargin
-                anchors.rightMargin: 0
-                anchors.topMargin: 0
-                anchors.bottomMargin: 0
-                source: parent.activeRow ? parent.activeRow.previewImage : ""
-                fillMode: Image.PreserveAspectFit
-                verticalAlignment: Image.AlignTop
-                asynchronous: true
-                smooth: true
+                entry: detailsPane.activeRow
+                foreground: root.foreground
+                borderColor: root.border
+                fontFamily: root.fontFamily
+                cornerRadius: root.cornerRadius
+                rowHeight: root.informationRowHeight
+                editing: root.editMode
+                draftText: root.editDraftText
+                editError: root.editError
+                saveShortcut: String(root.shortcuts.saveEdit)
+                cancelShortcut: String(root.shortcuts.close)
+                linkPreviewHelper: root.pluginPath + "/link_preview.py"
+                previewEnabled: root.opened
               }
             }
           }
@@ -606,4 +865,5 @@ Item {
       }
     }
   }
+
 }

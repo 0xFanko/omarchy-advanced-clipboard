@@ -7,7 +7,7 @@ function normalizeEntry(value) {
   var type = String(value.type || value.kind || "")
   if (type === "text") {
     var text = String(value.text || "")
-    return text.trim().length > 0 ? { type: "text", text: text } : null
+    return text.trim().length > 0 ? withSourceMetadata({ type: "text", text: text }, value) : null
   }
 
   if (type === "image") {
@@ -18,12 +18,23 @@ function normalizeEntry(value) {
       path: path,
       mime: String(value.mime || "image/png")
     }
-    if (value.capturedAt !== undefined && value.capturedAt !== null)
-      entry.capturedAt = String(value.capturedAt)
-    return entry
+    return withSourceMetadata(entry, value)
   }
 
   return null
+}
+
+function withSourceMetadata(entry, value) {
+  var sourceApp = String(value.sourceApp || "").trim()
+  var sourceIcon = String(value.sourceIcon || "").trim()
+  var sourceTitle = String(value.sourceTitle || "").trim()
+  var capturedAt = String(value.capturedAt || "").trim()
+
+  if (sourceApp) entry.sourceApp = sourceApp
+  if (sourceIcon) entry.sourceIcon = sourceIcon
+  if (sourceTitle) entry.sourceTitle = sourceTitle
+  if (capturedAt) entry.capturedAt = capturedAt
+  return entry
 }
 
 function entryKey(entry) {
@@ -46,6 +57,74 @@ function parseHistory(raw) {
   } catch (e) {
     return []
   }
+}
+
+function historyRetentionResult(history, retentionDays, now) {
+  var values = Array.isArray(history) ? history : []
+  var days = Number(retentionDays)
+  if (!isFinite(days) || days <= 0) return { entries: values.slice(), expiredImagePaths: [] }
+
+  var reference = now === undefined || now === null ? Date.now() : new Date(now).getTime()
+  if (!isFinite(reference)) reference = Date.now()
+  var cutoff = reference - Math.floor(days) * 24 * 60 * 60 * 1000
+  var next = []
+  var expiredImageCandidates = []
+
+  for (var i = 0; i < values.length; i++) {
+    var entry = normalizeEntry(values[i])
+    if (!entry) continue
+    var capturedAt = Date.parse(String(entry.capturedAt || ""))
+    // Legacy entries did not include a timestamp. Preserve them rather than
+    // deleting data whose age cannot be established.
+    if (!isFinite(capturedAt) || capturedAt >= cutoff) next.push(entry)
+    else if (entry.type === "image" && entry.path && expiredImageCandidates.indexOf(String(entry.path)) < 0)
+      expiredImageCandidates.push(String(entry.path))
+  }
+  var retainedImagePaths = []
+  for (var j = 0; j < next.length; j++) {
+    if (next[j].type === "image" && next[j].path && retainedImagePaths.indexOf(String(next[j].path)) < 0)
+      retainedImagePaths.push(String(next[j].path))
+  }
+  var expiredImagePaths = []
+  for (var k = 0; k < expiredImageCandidates.length; k++) {
+    if (retainedImagePaths.indexOf(expiredImageCandidates[k]) < 0)
+      expiredImagePaths.push(expiredImageCandidates[k])
+  }
+  return { entries: next, expiredImagePaths: expiredImagePaths }
+}
+
+function retainRecentEntries(history, retentionDays, now) {
+  return historyRetentionResult(history, retentionDays, now).entries
+}
+
+function isManagedImagePath(path, imageDirectory) {
+  var prefix = String(imageDirectory || "").replace(/\/$/, "") + "/"
+  var value = String(path || "")
+  if (prefix === "/" || value.indexOf(prefix) !== 0) return false
+  var basename = value.substring(prefix.length)
+  return /^[0-9a-f]{64}\.(png|jpg|webp|gif|bmp|tiff)$/i.test(basename)
+}
+
+function persistedImageCleanupResult(paths, history, imageDirectory) {
+  var values = Array.isArray(history) ? history : []
+  var referenced = {}
+  for (var i = 0; i < values.length; i++) {
+    var entry = normalizeEntry(values[i])
+    if (entry && entry.type === "image" && entry.path) referenced[String(entry.path)] = true
+  }
+
+  var deletablePaths = []
+  var referencedPaths = []
+  var seen = {}
+  var candidates = Array.isArray(paths) ? paths : []
+  for (var j = 0; j < candidates.length; j++) {
+    var path = String(candidates[j] || "")
+    if (seen[path] || !isManagedImagePath(path, imageDirectory)) continue
+    seen[path] = true
+    if (referenced[path]) referencedPaths.push(path)
+    else deletablePaths.push(path)
+  }
+  return { deletablePaths: deletablePaths, referencedPaths: referencedPaths }
 }
 
 function addEntry(history, entry, limit) {
@@ -79,6 +158,30 @@ function removeEntryAt(history, index) {
   return next
 }
 
+function updateTextEntry(history, index, text) {
+  var values = Array.isArray(history) ? history : []
+  var target = Number(index)
+  var nextText = String(text === undefined || text === null ? "" : text)
+  if (isNaN(target) || target < 0 || target >= values.length || !nextText.trim()) return values.slice()
+
+  var existing = normalizeEntry(values[target])
+  if (!existing || existing.type !== "text") return values.slice()
+
+  var updated = withSourceMetadata({ type: "text", text: nextText }, existing)
+  var updatedKey = entryKey(updated)
+  var next = []
+  for (var i = 0; i < values.length; i++) {
+    if (i === target) {
+      next.push(updated)
+      continue
+    }
+    var candidate = normalizeEntry(values[i])
+    if (!candidate || entryKey(candidate) === updatedKey) continue
+    next.push(candidate)
+  }
+  return next
+}
+
 function clearHistory() {
   return []
 }
@@ -91,8 +194,65 @@ function parseEntryJson(line) {
 
 function searchableText(entry) {
   if (!entry) return ""
-  if (entry.type === "image") return "image screenshot " + String(entry.mime || "") + " " + String(entry.capturedAt || "")
-  return String(entry.text || "") + " " + fileEntryText(entry)
+  var source = String(entry.sourceApp || "") + " " + String(entry.sourceTitle || "")
+  if (entry.type === "image") return "image screenshot " + String(entry.mime || "") + " " + String(entry.capturedAt || "") + " " + source
+  return String(entry.text || "") + " " + fileEntryText(entry) + " " + source
+}
+
+function linkUrl(entry) {
+  if (!entry || entry.type !== "text") return ""
+  var value = String(entry.text || "").trim()
+  if (/\s/.test(value)) return ""
+  return /^(https?|ftp):\/\/[^\s]+$/i.test(value) ? value : ""
+}
+
+function cleanSourceTitle(value, sourceApp) {
+  var title = String(value || "").trim()
+  if (!title) return ""
+
+  var knownSuffixes = [
+    " - Brave",
+    " - Brave Browser",
+    " - Google Chrome",
+    " - Chromium",
+    " — Mozilla Firefox",
+    " - Mozilla Firefox"
+  ]
+  for (var i = 0; i < knownSuffixes.length; i++) {
+    var suffix = knownSuffixes[i]
+    if (title.length > suffix.length && title.slice(-suffix.length) === suffix)
+      return title.slice(0, -suffix.length).trim()
+  }
+
+  var app = String(sourceApp || "").trim()
+  if (app) {
+    var separators = [" - ", " — ", " – "]
+    for (var j = 0; j < separators.length; j++) {
+      var genericSuffix = separators[j] + app
+      if (title.length > genericSuffix.length && title.slice(-genericSuffix.length).toLowerCase() === genericSuffix.toLowerCase())
+        return title.slice(0, -genericSuffix.length).trim()
+    }
+  }
+  return title
+}
+
+function displayType(entry, isFile, isImage, url) {
+  if (url) return "Link"
+  if (isFile) return "File"
+  if (isImage) return "Image"
+  return "Text"
+}
+
+function captureDate(value) {
+  var timestamp = String(value || "").trim()
+  var match = /^(\d{4})-(\d{2})-(\d{2})T/.exec(timestamp)
+  return match ? match[3] + "/" + match[2] + "/" + match[1] : "—"
+}
+
+function captureTime(value) {
+  var timestamp = String(value || "").trim()
+  var match = /(?:T|\s)(\d{2}):(\d{2})(?::\d{2})?/.exec(timestamp)
+  return match ? match[1] + ":" + match[2] : "—"
 }
 
 function decodeFileUri(uri) {
@@ -139,7 +299,10 @@ function imagePreviewText(entry) {
   if (!timestamp) return "Image"
 
   var label = String(entry && entry.mime || "") === "image/png" ? "Screenshot" : "Image"
-  return label + " from " + timestamp
+  var date = captureDate(timestamp)
+  var time = captureTime(timestamp)
+  var formattedTimestamp = date !== "—" ? date + (time !== "—" ? " " + time : "") : timestamp
+  return label + " from " + formattedTimestamp
 }
 
 function previewText(entry) {
@@ -168,7 +331,7 @@ function cappedEntry(entry) {
 
   // Cut on a line break so a file:// URI never truncates into a bogus path.
   var cut = entry.text.lastIndexOf("\n", displayTextLimit)
-  return { type: "text", text: entry.text.slice(0, cut > 0 ? cut : displayTextLimit) }
+  return withSourceMetadata({ type: "text", text: entry.text.slice(0, cut > 0 ? cut : displayTextLimit) }, entry)
 }
 
 function displayRows(history, query, limit) {
@@ -189,14 +352,22 @@ function displayRows(history, query, limit) {
     var paths = filePaths(entry)
     var isFile = paths.length > 0
     var isImage = entry.type === "image"
+    var url = linkUrl(entry)
     var previewPath = isImage ? String(entry.path || "") : (isFile && paths.length === 1 && isImagePath(paths[0]) ? paths[0] : "")
     rows.push({
       entryType: isFile ? "file" : entry.type,
+      typeLabel: displayType(entry, isFile, isImage, url),
       fullText: isImage ? "" : fullText(entry),
       previewText: previewText(entry),
       previewImage: previewPath,
       path: isImage ? String(entry.path || "") : (isFile && paths.length === 1 ? paths[0] : ""),
       mime: isImage ? String(entry.mime || "image/png") : "text/plain",
+      sourceApp: String(entry.sourceApp || "Unknown"),
+      sourceIcon: String(entry.sourceIcon || ""),
+      capturedDate: captureDate(entry.capturedAt),
+      capturedTime: captureTime(entry.capturedAt),
+      url: url,
+      title: url ? cleanSourceTitle(entry.sourceTitle, entry.sourceApp) : "",
       index: i
     })
     if (rows.length >= max) break
@@ -210,11 +381,21 @@ if (typeof module !== "undefined") {
     normalizeEntry: normalizeEntry,
     entryKey: entryKey,
     parseHistory: parseHistory,
+    historyRetentionResult: historyRetentionResult,
+    retainRecentEntries: retainRecentEntries,
+    isManagedImagePath: isManagedImagePath,
+    persistedImageCleanupResult: persistedImageCleanupResult,
     addEntry: addEntry,
     removeEntryAt: removeEntryAt,
+    updateTextEntry: updateTextEntry,
     clearHistory: clearHistory,
     parseEntryJson: parseEntryJson,
     searchableText: searchableText,
+    linkUrl: linkUrl,
+    cleanSourceTitle: cleanSourceTitle,
+    displayType: displayType,
+    captureDate: captureDate,
+    captureTime: captureTime,
     previewText: previewText,
     imagePreviewText: imagePreviewText,
     filePaths: filePaths,
