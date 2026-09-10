@@ -695,7 +695,7 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: root.filterText || "Dev : Search clipboard…"
+            text: root.filterText || "Search clipboard…"
             color: root.foreground
             opacity: root.filterText ? 1 : 0.58
             font.family: root.fontFamily
