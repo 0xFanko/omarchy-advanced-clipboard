@@ -31,6 +31,14 @@
 
 These dependencies are included with a standard Omarchy installation.
 
+## Installation
+
+Before installing Advanced Clipboard, disable Omarchy's built-in clipboard plugin to prevent both plugins from running at the same time:
+
+```bash
+omarchy plugin disable omarchy.clipboard
+```
+
 ## Configuration
 
 The plugin reads its user configuration from:
@@ -140,6 +148,15 @@ Preview loading starts 400 ms after selection to avoid unnecessary requests duri
 - History: `~/.local/state/omarchy/clipboard-history.json`
 - Captured images: `~/.local/state/omarchy/clipboard-images/`
 - Link-preview cache: the user cache directory under `omarchy-clipboard/link-previews/`
+
+## Remove
+
+Disable Advanced Clipboard, then remove it:
+
+```bash
+omarchy plugin disable 0xfanko.advenced-clipboard
+omarchy plugin remove 0xfanko.advenced-clipboard
+```
 
 ## Development
 
