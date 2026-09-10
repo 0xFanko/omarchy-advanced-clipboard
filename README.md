@@ -154,8 +154,8 @@ Preview loading starts 400 ms after selection to avoid unnecessary requests duri
 Disable Advanced Clipboard, then remove it:
 
 ```bash
-omarchy plugin disable 0xfanko.advenced-clipboard
-omarchy plugin remove 0xfanko.advenced-clipboard
+omarchy plugin disable 0xfanko.advanced-clipboard
+omarchy plugin remove 0xfanko.advanced-clipboard
 ```
 
 ## Development
