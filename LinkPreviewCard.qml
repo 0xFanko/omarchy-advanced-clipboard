@@ -53,7 +53,7 @@ Rectangle {
     if (!root.previewEnabled || !root.hasLink || !root.helper) return
     root.state = "loading"
     timeout.restart()
-    request.command = [root.helper, String(root.entry.url), String(root.requestSerial)]
+    request.command = ["/usr/bin/setpriv", "--pdeathsig", "TERM", "--", "/usr/bin/setsid", "/usr/bin/python3", root.helper, String(root.entry.url), String(root.requestSerial)]
     request.running = true
   }
 
@@ -83,6 +83,14 @@ Rectangle {
   Process {
     id: request
     command: []
+    clearEnvironment: true
+    environment: ({
+      HOME: null,
+      XDG_CACHE_HOME: null,
+      XDG_RUNTIME_DIR: null,
+      LANG: null,
+      LC_ALL: null
+    })
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.receive(text)

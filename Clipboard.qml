@@ -6,6 +6,7 @@ import qs.Commons
 import qs.Ui
 import "ClipboardConfig.js" as ClipboardConfig
 import "ClipboardHistory.js" as ClipboardHistory
+import "ClipboardBrokerState.js" as ClipboardBrokerState
 
 Item {
   id: root
@@ -28,11 +29,15 @@ Item {
   property var settings: ClipboardConfig.defaultConfig()
 
   readonly property string stateRoot: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
-  property string historyPath: root.stateRoot + "/omarchy/clipboard-history.json"
   property string imageDirectory: root.stateRoot + "/omarchy/clipboard-images"
   readonly property string pluginPath: root.manifest && root.manifest.__sourceDir ? String(root.manifest.__sourceDir) : root.omarchyPath + "/shell/plugins/clipboard"
   readonly property string configPath: root.pluginPath + "/clipboard.json"
-  property string captureScript: root.pluginPath + "/capture.sh"
+  property string clipboardHelper: root.pluginPath + "/clipboard_helper.py"
+  readonly property int editTextLimit: 262144
+  readonly property int historyProtocolCharacterLimit: 2000000
+  property bool brokerReady: false
+  property int brokerRequestSerial: 0
+  property var pendingHistorySave: null
   // Shares the [menu] surface tokens — themes that style the menu also
   // style the clipboard. Selected-row colors composed in the
   // singleton so consumers drop them straight into Rectangle bindings.
@@ -59,7 +64,7 @@ Item {
   function initialize() {
     if (root.initialized) return
     root.initialized = true
-    initProc.running = true
+    brokerProc.running = true
   }
 
   function open(payloadJson) {
@@ -95,7 +100,7 @@ Item {
 
   function canEditSelected() {
     var row = root.selectedRow()
-    return row && row.entryType === "text" && row.typeLabel === "Text"
+    return row && row.entryType === "text"
   }
 
   function beginEdit() {
@@ -132,6 +137,10 @@ Item {
     var nextText = detailsPane.editedText
     if (!String(nextText).trim()) {
       root.editError = "Clipboard text cannot be empty."
+      return
+    }
+    if (root.utf8ByteLength(nextText) > root.editTextLimit) {
+      root.editError = "Clipboard text exceeds the 256 KiB entry limit."
       return
     }
 
@@ -173,18 +182,6 @@ Item {
     return ClipboardHistory.entryKey(entry)
   }
 
-  function escapeProcessPattern(value) {
-    var text = String(value || "")
-    var special = "\\^$.*+?()[]{}|"
-    var escaped = ""
-    for (var i = 0; i < text.length; i++) {
-      var character = text.charAt(i)
-      if (special.indexOf(character) >= 0) escaped += "\\"
-      escaped += character
-    }
-    return escaped
-  }
-
   function loadHistory(raw) {
     root.applyHistoryRetention(ClipboardHistory.parseHistory(raw), true)
     if (root.opened && !root.editMode) root.rebuildDisplay()
@@ -205,13 +202,16 @@ Item {
 
     var cleanup = ClipboardHistory.persistedImageCleanupResult(
       root.pendingImageCleanupPaths,
-      ClipboardHistory.parseHistory(historyFile.text()),
+      root.history,
       root.imageDirectory
     )
     root.pendingImageCleanupPaths = cleanup.referencedPaths
-    var command = ["rm", "-f", "--"]
-    for (var i = 0; i < cleanup.deletablePaths.length; i++) command.push(cleanup.deletablePaths[i])
-    if (command.length > 3) Quickshell.execDetached(command)
+    var names = []
+    for (var i = 0; i < cleanup.deletablePaths.length; i++) {
+      var parts = String(cleanup.deletablePaths[i]).split("/")
+      names.push(parts[parts.length - 1])
+    }
+    if (names.length > 0) root.sendBroker({op: "delete-images", names: names})
   }
 
   function applyHistoryRetention(values, persistChanges) {
@@ -219,8 +219,7 @@ Item {
     var changed = result.entries.length !== values.length
     root.history = result.entries
     root.queueExpiredImageFiles(result.expiredImagePaths)
-    if (changed && persistChanges)
-      historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
+    if (changed && persistChanges) root.saveHistory()
     return changed
   }
 
@@ -232,9 +231,79 @@ Item {
     if (changed && root.opened && !root.editMode) root.rebuildDisplay()
   }
 
+  function boundedHistory() {
+    var values = root.history.slice(0, root.historyLimit)
+    while (values.length > 0 && JSON.stringify(values).length > root.historyProtocolCharacterLimit)
+      values.pop()
+    return values
+  }
+
+  function utf8ByteLength(value) {
+    var text = String(value || "")
+    var bytes = 0
+    for (var i = 0; i < text.length; i++) {
+      var code = text.charCodeAt(i)
+      if (code <= 0x7f) bytes += 1
+      else if (code <= 0x7ff) bytes += 2
+      else if (code >= 0xd800 && code <= 0xdbff
+          && i + 1 < text.length
+          && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
+        bytes += 4
+        i++
+      } else bytes += 3
+    }
+    return bytes
+  }
+
+  function sendBroker(payload) {
+    if (!brokerProc.running || !root.brokerReady) return false
+    brokerProc.write(JSON.stringify(payload) + "\n")
+    return true
+  }
+
+  function transmitPendingHistory() {
+    if (root.pendingHistorySave) root.sendBroker(root.pendingHistorySave)
+  }
+
   function saveHistory() {
     root.applyHistoryRetention(root.history, false)
-    historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
+    root.history = root.boundedHistory()
+    root.pendingHistorySave = {
+      op: "save",
+      requestId: ++root.brokerRequestSerial,
+      history: root.history
+    }
+    root.transmitPendingHistory()
+  }
+
+  function receiveBroker(line) {
+    if (!String(line || "").trim()) return
+    var payload
+    try { payload = JSON.parse(line) } catch (error) { return }
+    if (!payload || !payload.event) return
+    if (payload.event === "ready") {
+      // A save remains pending until its matching acknowledgement. If the
+      // broker restarted mid-write, replay newer in-memory state instead of
+      // replacing it with stale disk history.
+      var transition = ClipboardBrokerState.readiness(payload, Boolean(root.pendingHistorySave))
+      if (transition.shouldLoadHistory) root.loadHistory(JSON.stringify(transition.history))
+      root.brokerReady = transition.ready
+      if (transition.degraded) {
+        var recovery = transition.quarantine ? "; quarantined as " + transition.quarantine : ""
+        console.warn("Clipboard history recovery: " + transition.message + recovery)
+      }
+      // Loading can itself queue a retention save, so transmit after every
+      // readiness transition rather than only when a save predated startup.
+      root.transmitPendingHistory()
+    }
+    else if (payload.event === "capture") root.addClipboardEntry(payload.entry)
+    else if (payload.event === "saved") {
+      if (ClipboardBrokerState.acknowledges(root.pendingHistorySave, payload)) {
+        root.pendingHistorySave = null
+        root.removePersistedExpiredImageFiles()
+      }
+    }
+    else if (payload.event === "error") console.warn("Clipboard helper: " + String(payload.message || "unknown error"))
   }
 
   function addClipboardEntry(entry) {
@@ -430,19 +499,6 @@ Item {
   }
 
   FileView {
-    id: historyFile
-    path: root.historyPath
-    watchChanges: true
-    atomicWrites: true
-    printErrors: false
-    onLoaded: root.loadHistory(text())
-    onLoadFailed: root.loadHistory("[]")
-    onSaved: root.removePersistedExpiredImageFiles()
-    onSaveFailed: function(error) { console.warn("Clipboard: failed to save history: " + error) }
-    onFileChanged: reload()
-  }
-
-  FileView {
     id: configFile
     path: root.configPath
     watchChanges: true
@@ -452,63 +508,40 @@ Item {
     onFileChanged: reload()
   }
 
-  // Reap watchers left behind by a previous shell instance, then start our
-  // own. The pdeathsig on the watchers makes the kernel kill them whenever
-  // the shell exits, however it exits, so no further lifecycle management.
+  // One supervised helper owns snapshot/watch subprocess groups and secure
+  // persistence. Every line reaching QML has already passed its byte/deadline
+  // boundary; there is no ambient process-name killing.
   Process {
-    id: initProc
-    command: [
-      "pkill",
-      "-f",
-      "^wl-paste --type (text|image/png) --watch "
-        + root.escapeProcessPattern(root.captureScript)
-        + " (text|image/png)$"
-    ]
+    id: brokerProc
+    command: ["/usr/bin/setpriv", "--pdeathsig", "TERM", "--", "/usr/bin/python3", root.clipboardHelper, "broker"]
+    clearEnvironment: true
+    environment: ({
+      HOME: null,
+      XDG_STATE_HOME: null,
+      XDG_CACHE_HOME: null,
+      XDG_RUNTIME_DIR: null,
+      WAYLAND_DISPLAY: null,
+      HYPRLAND_INSTANCE_SIGNATURE: null,
+      CLIPBOARD_STATE: null,
+      LANG: null,
+      LC_ALL: null
+    })
+    stdinEnabled: true
+    onStarted: root.brokerReady = false
     onExited: {
-      currentProc.running = true
-      textWatchProc.running = true
-      imageWatchProc.running = true
+      root.brokerReady = false
+      brokerRestartTimer.restart()
     }
-  }
-
-  Process {
-    id: currentProc
-    command: [root.captureScript]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.addClipboardJson(text)
-    }
-  }
-
-  Process {
-    id: textWatchProc
-    command: ["setpriv", "--pdeathsig", "TERM", "wl-paste", "--type", "text", "--watch", root.captureScript, "text"]
-    onExited: watchRestartTimer.restart()
     stdout: SplitParser {
-      onRead: function(data) { root.addClipboardJson(data) }
+      onRead: function(data) { root.receiveBroker(data) }
     }
   }
 
-  Process {
-    id: imageWatchProc
-    command: ["setpriv", "--pdeathsig", "TERM", "wl-paste", "--type", "image/png", "--watch", root.captureScript, "image/png"]
-    onExited: watchRestartTimer.restart()
-    stdout: SplitParser {
-      onRead: function(data) { root.addClipboardJson(data) }
-    }
-  }
-
-  // A watcher that dies takes clipboard history with it, silently: copying still
-  // works, the picker still opens, and the old entries are all still there, so
-  // nothing recorded until the next shell reload. Bring it back instead.
   Timer {
-    id: watchRestartTimer
+    id: brokerRestartTimer
     interval: 1000
     repeat: false
-    onTriggered: {
-      if (!textWatchProc.running) textWatchProc.running = true
-      if (!imageWatchProc.running) imageWatchProc.running = true
-    }
+    onTriggered: if (!brokerProc.running) brokerProc.running = true
   }
 
   PanelWindow {

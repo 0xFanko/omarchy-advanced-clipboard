@@ -6,10 +6,13 @@ import ctypes
 import ipaddress
 import os
 import re
+import resource
 import signal
 import socket
+import stat
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -18,10 +21,52 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 MAX_REDIRECTS = 3
 MAX_URL_LENGTH = 8192
 REQUEST_TIMEOUT_SECONDS = 8.0
+HEADER_MAX_BYTES = 64 * 1024
+CURL_CANDIDATES = ("/usr/bin/curl", "/bin/curl")
+_CHILDREN: set[subprocess.Popen] = set()
+_CHILDREN_LOCK = threading.Lock()
 
 
 class PreviewError(Exception):
     pass
+
+
+def trusted_curl() -> str:
+    for candidate in CURL_CANDIDATES:
+        trusted = trusted_system_path(candidate)
+        if trusted: return trusted
+    raise PreviewError("The trusted HTTP client is unavailable.")
+
+
+def trusted_system_path(candidate: str) -> str | None:
+    resolved = os.path.realpath(candidate)
+    try:
+        current = "/"
+        for part in resolved.split("/")[1:]:
+            current = os.path.join(current, part)
+            value = os.stat(current, follow_symlinks=False)
+            if value.st_uid != 0 or value.st_mode & 0o022: return None
+        if stat.S_ISREG(value.st_mode) and os.access(resolved, os.X_OK): return resolved
+    except OSError:
+        pass
+    return None
+
+
+def terminate_process_tree(process: subprocess.Popen, grace: float = 0.2) -> None:
+    try: os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError: pass
+    try: process.wait(timeout=grace)
+    except subprocess.TimeoutExpired: pass
+    try: os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError: pass
+    try: process.wait(timeout=grace)
+    except subprocess.TimeoutExpired: pass
+    with _CHILDREN_LOCK: _CHILDREN.discard(process)
+
+
+def terminate_all_children() -> None:
+    with _CHILDREN_LOCK: children = list(_CHILDREN)
+    for process in children: terminate_process_tree(process)
 
 
 @dataclass(frozen=True)
@@ -128,7 +173,7 @@ class NetworkClient:
         max_body_bytes: int,
     ) -> Response:
         command = [
-            "curl", "--disable", "--silent", "--show-error", "--noproxy", "*",
+            trusted_curl(), "--disable", "--silent", "--show-error", "--noproxy", "*",
             "--max-redirs", "0", "--proto", "=http,https",
             "--connect-timeout", str(max(0.1, timeout)),
             "--max-time", str(max(0.1, timeout)),
@@ -138,16 +183,15 @@ class NetworkClient:
             resolve_address = f"[{target.address}]" if ":" in target.address else target.address
             command.extend(("--resolve", f"{target.host}:{target.port}:{resolve_address}"))
 
-        environment = os.environ.copy()
-        for name in list(environment):
-            if name.lower() in ("http_proxy", "https_proxy", "all_proxy", "no_proxy"):
-                environment.pop(name, None)
+        environment = {"PATH": "/usr/bin:/bin", "LANG": os.environ.get("LANG", "C.UTF-8")}
 
         with tempfile.NamedTemporaryFile() as header_file, tempfile.TemporaryFile() as error_file:
             command.extend(("--dump-header", header_file.name, target.url))
             parent_pid = os.getpid()
 
             def terminate_with_parent() -> None:
+                os.setsid()
+                resource.setrlimit(resource.RLIMIT_FSIZE, (HEADER_MAX_BYTES, HEADER_MAX_BYTES))
                 libc = ctypes.CDLL(None)
                 libc.prctl(1, signal.SIGTERM)
                 if os.getppid() != parent_pid:
@@ -160,22 +204,29 @@ class NetworkClient:
                 env=environment,
                 preexec_fn=terminate_with_parent,
             )
+            with _CHILDREN_LOCK: _CHILDREN.add(process)
             body = bytearray()
             too_large = False
             assert process.stdout is not None
-            while True:
-                chunk = process.stdout.read(min(64 * 1024, max_body_bytes - len(body) + 1))
-                if not chunk:
-                    break
-                remaining = max_body_bytes - len(body)
-                if len(chunk) > remaining:
-                    body.extend(chunk[:remaining])
-                    too_large = True
-                    process.kill()
-                    break
-                body.extend(chunk)
-            process.stdout.close()
-            return_code = process.wait()
+            try:
+                while True:
+                    chunk = process.stdout.read(min(64 * 1024, max_body_bytes - len(body) + 1))
+                    if not chunk: break
+                    remaining = max_body_bytes - len(body)
+                    if len(chunk) > remaining:
+                        body.extend(chunk[:remaining]); too_large = True
+                        terminate_process_tree(process)
+                        break
+                    body.extend(chunk)
+                process.stdout.close()
+                return_code = process.wait()
+            except BaseException:
+                terminate_process_tree(process)
+                raise
+            finally:
+                # Clean the session even after curl exits; a helper descendant
+                # must never survive by outliving the session leader.
+                terminate_process_tree(process)
 
             if too_large:
                 raise PreviewError("The remote content is too large to preview safely.")
@@ -186,8 +237,10 @@ class NetworkClient:
                 detail = clean_error(error_file.read(512).decode("utf-8", errors="replace"))
                 raise PreviewError(detail or "The remote content could not be reached.")
 
+            if os.fstat(header_file.fileno()).st_size > HEADER_MAX_BYTES:
+                raise PreviewError("The remote response headers are too large.")
             header_file.seek(0)
-            status, headers = parse_headers(header_file.read())
+            status, headers = parse_headers(header_file.read(HEADER_MAX_BYTES + 1))
             return Response(status, headers, bytes(body))
 
     def fetch(self, initial_url: str, *, accept: str, max_body_bytes: int) -> tuple[Response, ValidatedUrl]:

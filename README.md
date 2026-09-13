@@ -14,7 +14,7 @@
 - Preview copied text, files, and images.
 - Display native Open Graph and Twitter Card previews for copied links.
 - Show the source application and capture details.
-- Edit text entries directly from the clipboard history.
+- Edit text and link entries directly from the clipboard history.
 - Copy, paste, open, or delete individual entries.
 - Clear the complete history.
 - Configure every internal keyboard shortcut.
@@ -27,7 +27,7 @@
 - `python3`
 - `curl`
 - ImageMagick with JPEG, PNG, GIF, and WebP support
-- `wl-clipboard`, `jq`, and `hyprctl`
+- `wl-clipboard`, `jq`, `hyprctl`, and util-linux (`setsid` and `setpriv`)
 
 These dependencies are included with a standard Omarchy installation.
 
@@ -92,7 +92,7 @@ The personal `clipboard.json` file is ignored by Git so local settings do not in
 | `pasteEntry` | Paste the selected entry |
 | `copyEntry` | Copy the selected entry without pasting it |
 | `openEntry` | Open the selected entry |
-| `editEntry` | Edit the selected text entry |
+| `editEntry` | Edit the selected text or link entry |
 | `saveEdit` | Save the current edit |
 | `deleteEntry` | Delete the selected entry |
 | `clearHistory` | Clear the complete history |
@@ -101,7 +101,7 @@ Shortcuts use Qt syntax such as `Ctrl+X` or `Shift+Delete` and must be unique. C
 
 Avoid assigning a single letter: while the clipboard overlay is open, that letter could no longer be entered in the search field.
 
-Only entries shown as `Text` can be edited. `editEntry` opens the editor, `saveEdit` saves the new content, and `close` cancels the edit.
+Only entries shown as `Text` or `Link` can be edited. `editEntry` opens the editor, `saveEdit` saves the new content, and `close` cancels the edit.
 
 ### History retention
 
@@ -137,17 +137,37 @@ The preview implementation treats every remote page as untrusted:
 - Private, loopback, link-local, multicast, and metadata-service addresses are blocked.
 - The validated address is pinned for each connection to reduce DNS-rebinding risk.
 - Proxy environment variables are ignored to preserve network pinning.
-- HTML responses are limited to 2 MiB and images to 5 MiB.
+- HTML responses are limited to 2 MiB, HTTP response headers to 64 KiB, and downloaded or normalized preview images to 5 MiB.
 - JPEG, PNG, GIF, and WebP inputs are decoded in an isolated ImageMagick subprocess with resource and dimension limits, then re-encoded as Qt-compatible PNG files.
 - Preview images are cached for 24 hours, up to 100 files and 100 MiB; older files are pruned automatically.
 
 Preview loading starts 400 ms after selection to avoid unnecessary requests during rapid navigation. If an image is absent, invalid, or blocked, available title and description metadata remain visible. A preview failure never blocks copy, paste, open, edit, search, or history loading.
 
+## Capture limits and compatibility
+
+Clipboard capture runs through a supervised helper before data reaches a QML collector or persistent file:
+
+- Text payloads are rejected above **256 KiB**; captured images are rejected above **20 MiB**.
+- A serialized capture record is limited to **512 KiB**, and history is limited to **8 MiB** on disk; whole oldest entries are evicted before persistence when needed.
+- Snapshot processing and each watch callback have a **3 second total deadline**; source-window lookup is capped at **1 second** within that deadline.
+- Watch output is rate-limited independently per MIME watcher to a burst of **20 records**, refilling at **2 records/second**. Excess records are dropped.
+- UTF-8, BOM-marked UTF-16, and conservatively detected NUL-padded UTF-16 text remain supported. Snapshot image compatibility includes PNG, JPEG, WebP, GIF, BMP, and TIFF; the continuous image watcher uses PNG, matching Wayland screenshot behavior.
+- Required programs are selected from fixed absolute system paths. Child environments are cleared and retain only the home, XDG state/cache/runtime, Wayland, Hyprland, clipboard-sensitivity, and locale variables needed for compatibility.
+- Each watcher, snapshot, and link-preview job owns a supervised process session; its subprocesses stay in that session so timeout, cancellation, and shutdown can terminate and reap the full process tree. The plugin never uses ambient `pkill` matching.
+
+History, captured images, and preview media use user-owned `0700` directories and `0600` files. Opens, atomic replacements, and deletions are descriptor-relative and use `O_NOFOLLOW`; unsafe symlinks, hard links, ownership, and file types are rejected.
+
+Configured XDG storage roots must be owned by the current user; group/world write bits are removed from a user-owned configured root before use. Their existing ancestors must be owned by root or the current user and must not be writable by other users, except for standard sticky shared ancestors such as `/tmp`; a private per-user directory below `/tmp` is supported. Unsafe ancestors and roots that cannot be hardened are rejected. These checks protect pathname stability against other unprivileged local users. They do not defend against a malicious process running as the same UID, privileged users, or kernel compromise.
+
+If the initial history file is malformed, oversized, or otherwise unreadable, the broker still announces degraded readiness so new captures continue in memory. When the state directory itself is safe and accessible, the original directory entry is renamed to `clipboard-history.json.quarantine-<UTC timestamp>-<random suffix>` without following it; the next bounded save creates a fresh history file. If the configured root itself is unsafe or inaccessible, quarantine is not possible and persistence continues to report errors until that root is repaired, while the UI remains usable.
+
+`link_preview.py` keeps an `env python3` shebang for supported direct command-line diagnostics. The plugin runtime does not rely on PATH resolution: QML launches the helper explicitly through `/usr/bin/python3` with a cleared environment.
+
 ## Data storage
 
 - History: `~/.local/state/omarchy/clipboard-history.json`
 - Captured images: `~/.local/state/omarchy/clipboard-images/`
-- Link-preview cache: the user cache directory under `omarchy-clipboard/link-previews/`
+- Link-preview cache: `~/.cache/omarchy/clipboard-link-media-v4/` (or the corresponding `XDG_CACHE_HOME` path)
 
 ## Remove
 

@@ -4,15 +4,19 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import sys
 
+import preview_media
+import preview_network
 from preview_media import fetch_preview_image
 from preview_metadata import PreviewMetadata, parse_metadata
 from preview_network import NetworkClient, PreviewError
 
 HTML_MAX_BYTES = 2 * 1024 * 1024
 HELPER_TIMEOUT_SECONDS = 14.0
+HELPER_OUTPUT_MAX_BYTES = 8 * 1024
 
 
 def fetch_metadata(url: str) -> PreviewMetadata:
@@ -44,31 +48,51 @@ def preview_payload(url: str) -> dict[str, str]:
 
 
 def result(serial: int, state: str, **values: str) -> str:
-    return json.dumps({"serial": serial, "state": state, **values}, ensure_ascii=False, separators=(",", ":"))
+    payload = json.dumps({"serial": serial, "state": state, **values}, ensure_ascii=False, separators=(",", ":"))
+    if len(payload.encode("utf-8")) + 1 > HELPER_OUTPUT_MAX_BYTES:
+        payload = json.dumps({"serial": serial, "state": "error", "error": "The preview result was too large."}, separators=(",", ":"))
+    return payload
+
+
+def emit_result(payload: str) -> None:
+    encoded = payload.encode("utf-8")
+    if len(encoded) + 1 > HELPER_OUTPUT_MAX_BYTES: raise RuntimeError("preview output boundary failed")
+    os.write(sys.stdout.fileno(), encoded + b"\n")
+
+
+def terminate_children() -> None:
+    preview_network.terminate_all_children()
+    preview_media.terminate_all_children()
 
 
 def main(argv: list[str]) -> int:
     serial = int(argv[2]) if len(argv) > 2 and argv[2].isdigit() else 0
     if len(argv) < 2:
-        print(result(serial, "error", error="A page URL is required."))
+        emit_result(result(serial, "error", error="A page URL is required."))
         return 0
 
     def deadline_expired(signum, frame) -> None:
+        terminate_children()
         raise PreviewError("The preview request timed out.")
 
     previous_handler = signal.signal(signal.SIGALRM, deadline_expired)
+    previous_term_handler = signal.signal(signal.SIGTERM, deadline_expired)
+    previous_int_handler = signal.signal(signal.SIGINT, deadline_expired)
     signal.setitimer(signal.ITIMER_REAL, HELPER_TIMEOUT_SECONDS)
     try:
         preview = preview_payload(argv[1])
         state = "ready" if any(preview.values()) else "empty"
-        print(result(serial, state, **preview))
+        emit_result(result(serial, state, **preview))
     except PreviewError as error:
-        print(result(serial, "error", error=str(error)))
+        emit_result(result(serial, "error", error=str(error)[:1000]))
     except Exception:
-        print(result(serial, "error", error="The page preview failed unexpectedly."))
+        emit_result(result(serial, "error", error="The page preview failed unexpectedly."))
     finally:
+        terminate_children()
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
+        signal.signal(signal.SIGTERM, previous_term_handler)
+        signal.signal(signal.SIGINT, previous_int_handler)
     return 0
 
 
